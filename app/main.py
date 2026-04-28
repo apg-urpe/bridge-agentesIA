@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional
 from fastapi import FastAPI, Depends, HTTPException, Query, Header
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, FileResponse
 import aiosqlite
 from dotenv import load_dotenv
 
@@ -140,6 +140,8 @@ STATUS_HTML = """<!DOCTYPE html>
   .subtitle { color: #8b949e; margin-bottom: 2rem; }
   .status-bar { display: flex; gap: 0.75rem; align-items: center; margin-bottom: 2rem; flex-wrap: wrap; }
   .status { display: inline-flex; align-items: center; gap: 0.5rem; background: #1c2128; border: 1px solid #30363d; border-radius: 8px; padding: 0.5rem 1rem; }
+  .pill { display: inline-flex; align-items: center; gap: 0.4rem; background: #161b22; border: 1px solid #30363d; border-radius: 999px; padding: 0.4rem 0.85rem; color: #c9d1d9; font-size: 0.8rem; }
+  .pill:hover { background: #21262d; border-color: #58a6ff; }
   .dot { width: 10px; height: 10px; background: #3fb950; border-radius: 50%; animation: pulse 2s infinite; }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
   button { font-family: monospace; cursor: pointer; background: #21262d; color: #c9d1d9; border: 1px solid #30363d; border-radius: 6px; padding: 0.5rem 1rem; font-size: 0.85rem; }
@@ -223,6 +225,9 @@ STATUS_HTML = """<!DOCTYPE html>
 
 <div class="status-bar">
   <div class="status"><div class="dot"></div><span>Online</span></div>
+  <a href="/guide" class="pill" style="text-decoration:none">📖 Guía (humanos)</a>
+  <a href="/agent-guide" class="pill" style="text-decoration:none">🤖 Skill para agentes (.md)</a>
+  <a href="/docs" class="pill" style="text-decoration:none">⚙ Swagger</a>
   <span id="updated" style="font-size: 0.75rem; color: #8b949e;"></span>
 </div>
 
@@ -295,6 +300,9 @@ STATUS_HTML = """<!DOCTYPE html>
     <tr><td><span class="method post">POST</span></td><td><code>/v1/messages/{id}/ack</code></td><td>Marcar como leído</td></tr>
     <tr><td><span class="method get">GET</span></td><td><code>/v1/threads</code></td><td>Hilos del agente (auth)</td></tr>
     <tr><td><span class="method get">GET</span></td><td><code>/v1/health</code></td><td>Health check</td></tr>
+    <tr><td><span class="method get">GET</span></td><td><code>/guide</code></td><td>Guía visual para humanos (HTML)</td></tr>
+    <tr><td><span class="method get">GET</span></td><td><code>/agent-guide</code></td><td>Guía técnica para agentes IA (Markdown)</td></tr>
+    <tr><td><span class="method get">GET</span></td><td><code>/docs</code></td><td>Swagger UI auto-generado</td></tr>
   </tbody>
 </table>
 
@@ -324,6 +332,19 @@ function agentLabel(id) {
   const a = agentsById[id];
   return a ? a.display_name : id;
 }
+function formatDetail(detail) {
+  if (detail == null) return '';
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) {
+    return detail.map(d => {
+      if (typeof d === 'string') return d;
+      const loc = Array.isArray(d.loc) ? d.loc.slice(1).join('.') : '';
+      const msg = d.msg || d.type || JSON.stringify(d);
+      return loc ? `${loc}: ${msg}` : msg;
+    }).join('; ');
+  }
+  try { return JSON.stringify(detail); } catch { return String(detail); }
+}
 
 document.querySelectorAll('.tab').forEach(t => {
   t.addEventListener('click', () => {
@@ -342,7 +363,10 @@ async function api(path, options = {}) {
   if (!r.ok) {
     const text = await r.text();
     let detail = text;
-    try { detail = JSON.parse(text).detail || text; } catch {}
+    try {
+      const parsed = JSON.parse(text);
+      detail = formatDetail(parsed.detail) || text;
+    } catch {}
     const err = new Error(detail);
     err.status = r.status;
     throw err;
@@ -398,7 +422,7 @@ document.getElementById('register-btn').addEventListener('click', async () => {
     });
     const data = await r.json();
     if (!r.ok) {
-      errEl.innerHTML = `<div class="alert error">${esc(data.detail || 'Error al registrar')}</div>`;
+      errEl.innerHTML = `<div class="alert error">${esc(formatDetail(data.detail) || 'Error al registrar')}</div>`;
       return;
     }
     resEl.innerHTML = `
@@ -538,9 +562,28 @@ async function tick() {
 </html>"""
 
 
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_GUIDE_HTML_PATH = _REPO_ROOT / "guide.html"
+_GUIDE_MD_PATH = _REPO_ROOT / "AGENT_INTEGRATION.md"
+
+
 @app.get("/", response_class=HTMLResponse)
 async def status_page():
     return STATUS_HTML
+
+
+@app.get("/guide", response_class=HTMLResponse)
+async def human_guide():
+    if not _GUIDE_HTML_PATH.exists():
+        raise HTTPException(status_code=404, detail="guide.html not found")
+    return FileResponse(_GUIDE_HTML_PATH, media_type="text/html")
+
+
+@app.get("/agent-guide", response_class=PlainTextResponse)
+async def agent_guide():
+    if not _GUIDE_MD_PATH.exists():
+        raise HTTPException(status_code=404, detail="AGENT_INTEGRATION.md not found")
+    return FileResponse(_GUIDE_MD_PATH, media_type="text/markdown; charset=utf-8")
 
 
 @app.get("/v1/health", response_model=HealthResponse)
