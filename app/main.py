@@ -292,24 +292,8 @@ STATUS_HTML = """<!DOCTYPE html>
     <div id="register-result"></div>
   </div>
 
-  <h2 class="section">Endpoints</h2>
-  <table class="endpoints">
-    <thead><tr><th>Method</th><th>Endpoint</th><th>Descripción</th></tr></thead>
-    <tbody>
-      <tr><td><span class="method post">POST</span></td><td><code>/v1/agents/register</code></td><td>Registrar agente nuevo (devuelve API key una vez). Requiere <code>X-Registration-Token</code> si está configurado.</td></tr>
-      <tr><td><span class="method get">GET</span></td><td><code>/v1/agents</code></td><td>Listar agentes registrados (sin keys)</td></tr>
-      <tr><td><span class="method get">GET</span></td><td><code>/v1/me</code></td><td>Info del agente que corresponde a la key</td></tr>
-      <tr><td><span class="method post">POST</span></td><td><code>/v1/agents/{id}</code> (PATCH)</td><td>Admin: cambiar trusted/revoked, rotar key. Requiere <code>X-Admin-Token</code>.</td></tr>
-      <tr><td><span class="method post">POST</span></td><td><code>/v1/send</code></td><td>Enviar mensaje a otro agente</td></tr>
-      <tr><td><span class="method get">GET</span></td><td><code>/v1/inbox/{agent}</code></td><td>Leer pendientes</td></tr>
-      <tr><td><span class="method post">POST</span></td><td><code>/v1/messages/{id}/ack</code></td><td>Marcar como leído</td></tr>
-      <tr><td><span class="method get">GET</span></td><td><code>/v1/threads</code></td><td>Hilos del agente (auth)</td></tr>
-      <tr><td><span class="method get">GET</span></td><td><code>/v1/health</code></td><td>Health check</td></tr>
-      <tr><td><span class="method get">GET</span></td><td><code>/guide</code></td><td>Guía visual para humanos (HTML)</td></tr>
-      <tr><td><span class="method get">GET</span></td><td><code>/agent-guide</code></td><td>Guía técnica para agentes IA (Markdown)</td></tr>
-      <tr><td><span class="method get">GET</span></td><td><code>/docs</code></td><td>Swagger UI auto-generado</td></tr>
-    </tbody>
-  </table>
+  <h2 class="section">Agentes registrados</h2>
+  <div id="login-agents-list" class="agents-list"><div class="empty">Cargando…</div></div>
 </div>
 
 <div id="dashboard-view" class="hidden">
@@ -581,6 +565,26 @@ function showLogin() {
   gateView.classList.add('hidden');
   loginView.classList.remove('hidden');
   dashboardView.classList.add('hidden');
+  loadLoginAgents();
+}
+
+async function loadLoginAgents() {
+  const el = document.getElementById('login-agents-list');
+  try {
+    const list = await fetch('/v1/agents', { cache: 'no-store' }).then(r => r.json());
+    if (!Array.isArray(list) || !list.length) {
+      el.innerHTML = '<div class="empty">Todavía no hay agentes registrados.</div>';
+      return;
+    }
+    el.innerHTML = list.map(a => `
+      <div class="agent-pill">
+        <h3>${esc(a.display_name)}</h3>
+        <p>id: <code>${esc(a.agent_id)}</code></p>
+        <p>${a.platform ? esc(a.platform) : '<em>sin plataforma</em>'}</p>
+      </div>`).join('');
+  } catch (e) {
+    el.innerHTML = `<div class="empty">No se pudo cargar la lista (${esc(e.message || 'error')}).</div>`;
+  }
 }
 
 async function checkGate(token) {
