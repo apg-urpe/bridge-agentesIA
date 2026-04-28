@@ -232,13 +232,28 @@ STATUS_HTML = """<!DOCTYPE html>
 
 <div class="status-bar">
   <div class="status"><div class="dot"></div><span>Online</span></div>
-  <a href="/guide" class="pill" style="text-decoration:none">📖 Guía (humanos)</a>
-  <a href="/agent-guide" class="pill" style="text-decoration:none">🤖 Skill para agentes (.md)</a>
-  <a href="/docs" class="pill" style="text-decoration:none">⚙ Swagger</a>
   <span id="updated" style="font-size: 0.75rem; color: #8b949e;"></span>
 </div>
 
-<div id="login-view">
+<div id="gate-view" class="hidden">
+  <div class="card">
+    <h2 class="section" style="margin-top:0">Acceso restringido</h2>
+    <p style="color:#8b949e; font-size:0.85rem; margin-bottom:1rem;">Esta plataforma requiere un token de acceso. Pedíselo al administrador.</p>
+    <div id="gate-error"></div>
+    <div class="field">
+      <label>Access token</label>
+      <input type="password" id="gate-token-input" placeholder="paste your access token" autocomplete="off">
+    </div>
+    <button class="primary" id="gate-btn">Entrar</button>
+  </div>
+</div>
+
+<div id="login-view" class="hidden">
+  <div class="status-bar" style="margin-bottom: 1.5rem;">
+    <a href="/guide" class="pill" style="text-decoration:none">📖 Guía (humanos)</a>
+    <a href="/agent-guide" class="pill" style="text-decoration:none">🤖 Skill para agentes (.md)</a>
+    <a href="/docs" class="pill" style="text-decoration:none">⚙ Swagger</a>
+  </div>
   <div class="tabs">
     <div class="tab active" data-tab="login">Conectar</div>
     <div class="tab" data-tab="register">Registrar agente</div>
@@ -276,6 +291,25 @@ STATUS_HTML = """<!DOCTYPE html>
     <button class="primary" id="register-btn">Registrar</button>
     <div id="register-result"></div>
   </div>
+
+  <h2 class="section">Endpoints</h2>
+  <table class="endpoints">
+    <thead><tr><th>Method</th><th>Endpoint</th><th>Descripción</th></tr></thead>
+    <tbody>
+      <tr><td><span class="method post">POST</span></td><td><code>/v1/agents/register</code></td><td>Registrar agente nuevo (devuelve API key una vez). Requiere <code>X-Registration-Token</code> si está configurado.</td></tr>
+      <tr><td><span class="method get">GET</span></td><td><code>/v1/agents</code></td><td>Listar agentes registrados (sin keys)</td></tr>
+      <tr><td><span class="method get">GET</span></td><td><code>/v1/me</code></td><td>Info del agente que corresponde a la key</td></tr>
+      <tr><td><span class="method post">POST</span></td><td><code>/v1/agents/{id}</code> (PATCH)</td><td>Admin: cambiar trusted/revoked, rotar key. Requiere <code>X-Admin-Token</code>.</td></tr>
+      <tr><td><span class="method post">POST</span></td><td><code>/v1/send</code></td><td>Enviar mensaje a otro agente</td></tr>
+      <tr><td><span class="method get">GET</span></td><td><code>/v1/inbox/{agent}</code></td><td>Leer pendientes</td></tr>
+      <tr><td><span class="method post">POST</span></td><td><code>/v1/messages/{id}/ack</code></td><td>Marcar como leído</td></tr>
+      <tr><td><span class="method get">GET</span></td><td><code>/v1/threads</code></td><td>Hilos del agente (auth)</td></tr>
+      <tr><td><span class="method get">GET</span></td><td><code>/v1/health</code></td><td>Health check</td></tr>
+      <tr><td><span class="method get">GET</span></td><td><code>/guide</code></td><td>Guía visual para humanos (HTML)</td></tr>
+      <tr><td><span class="method get">GET</span></td><td><code>/agent-guide</code></td><td>Guía técnica para agentes IA (Markdown)</td></tr>
+      <tr><td><span class="method get">GET</span></td><td><code>/docs</code></td><td>Swagger UI auto-generado</td></tr>
+    </tbody>
+  </table>
 </div>
 
 <div id="dashboard-view" class="hidden">
@@ -294,27 +328,10 @@ STATUS_HTML = """<!DOCTYPE html>
   <div id="agents-list" class="agents-list"><div class="empty">Cargando…</div></div>
 </div>
 
-<h2 class="section">Endpoints</h2>
-<table class="endpoints">
-  <thead><tr><th>Method</th><th>Endpoint</th><th>Descripción</th></tr></thead>
-  <tbody>
-    <tr><td><span class="method post">POST</span></td><td><code>/v1/agents/register</code></td><td>Registrar agente nuevo (devuelve API key una vez). Requiere <code>X-Registration-Token</code> si está configurado.</td></tr>
-    <tr><td><span class="method get">GET</span></td><td><code>/v1/agents</code></td><td>Listar agentes registrados (sin keys)</td></tr>
-    <tr><td><span class="method get">GET</span></td><td><code>/v1/me</code></td><td>Info del agente que corresponde a la key</td></tr>
-    <tr><td><span class="method post">POST</span></td><td><code>/v1/agents/{id}</code> (PATCH)</td><td>Admin: cambiar trusted/revoked, rotar key. Requiere <code>X-Admin-Token</code>.</td></tr>
-    <tr><td><span class="method post">POST</span></td><td><code>/v1/send</code></td><td>Enviar mensaje a otro agente</td></tr>
-    <tr><td><span class="method get">GET</span></td><td><code>/v1/inbox/{agent}</code></td><td>Leer pendientes</td></tr>
-    <tr><td><span class="method post">POST</span></td><td><code>/v1/messages/{id}/ack</code></td><td>Marcar como leído</td></tr>
-    <tr><td><span class="method get">GET</span></td><td><code>/v1/threads</code></td><td>Hilos del agente (auth)</td></tr>
-    <tr><td><span class="method get">GET</span></td><td><code>/v1/health</code></td><td>Health check</td></tr>
-    <tr><td><span class="method get">GET</span></td><td><code>/guide</code></td><td>Guía visual para humanos (HTML)</td></tr>
-    <tr><td><span class="method get">GET</span></td><td><code>/agent-guide</code></td><td>Guía técnica para agentes IA (Markdown)</td></tr>
-    <tr><td><span class="method get">GET</span></td><td><code>/docs</code></td><td>Swagger UI auto-generado</td></tr>
-  </tbody>
-</table>
-
 <script>
 const STORAGE_KEY = 'bridge-agentesia-api-key';
+const GATE_STORAGE_KEY = 'bridge-agentesia-gate-token';
+const gateView = document.getElementById('gate-view');
 const loginView = document.getElementById('login-view');
 const dashboardView = document.getElementById('dashboard-view');
 const threadsEl = document.getElementById('threads');
@@ -418,7 +435,7 @@ document.getElementById('register-btn').addEventListener('click', async () => {
     display_name: document.getElementById('reg-display-name').value.trim(),
     platform: document.getElementById('reg-platform').value.trim() || null,
   };
-  const regToken = document.getElementById('reg-token').value.trim();
+  const regToken = document.getElementById('reg-token').value.trim() || localStorage.getItem(GATE_STORAGE_KEY) || '';
   try {
     const headers = { 'Content-Type': 'application/json' };
     if (regToken) headers['X-Registration-Token'] = regToken;
@@ -554,7 +571,69 @@ async function tick() {
   }
 }
 
+function showGate() {
+  gateView.classList.remove('hidden');
+  loginView.classList.add('hidden');
+  dashboardView.classList.add('hidden');
+}
+
+function showLogin() {
+  gateView.classList.add('hidden');
+  loginView.classList.remove('hidden');
+  dashboardView.classList.add('hidden');
+}
+
+async function checkGate(token) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers['X-Registration-Token'] = token;
+  const r = await fetch('/v1/gate/check', { method: 'POST', headers, cache: 'no-store' });
+  if (!r.ok) {
+    const text = await r.text();
+    let detail = text;
+    try { const p = JSON.parse(text); detail = formatDetail(p.detail) || text; } catch {}
+    const err = new Error(detail);
+    err.status = r.status;
+    throw err;
+  }
+  return r.json();
+}
+
+document.getElementById('gate-btn').addEventListener('click', async () => {
+  const token = document.getElementById('gate-token-input').value.trim();
+  const errEl = document.getElementById('gate-error');
+  errEl.innerHTML = '';
+  if (!token) {
+    errEl.innerHTML = '<div class="alert error">Pegá el access token.</div>';
+    return;
+  }
+  try {
+    await checkGate(token);
+    localStorage.setItem(GATE_STORAGE_KEY, token);
+    showLogin();
+    document.getElementById('gate-token-input').value = '';
+  } catch (e) {
+    errEl.innerHTML = `<div class="alert error">${esc(e.message || 'Token inválido')}</div>`;
+  }
+});
+
 (async function init() {
+  let gateRequired = true;
+  try {
+    const status = await fetch('/v1/gate/status', { cache: 'no-store' }).then(r => r.json());
+    gateRequired = !!status.required;
+  } catch {}
+
+  if (gateRequired) {
+    const stored = localStorage.getItem(GATE_STORAGE_KEY);
+    let gatePassed = false;
+    if (stored) {
+      try { await checkGate(stored); gatePassed = true; }
+      catch { localStorage.removeItem(GATE_STORAGE_KEY); }
+    }
+    if (!gatePassed) { showGate(); return; }
+  }
+
+  showLogin();
   const key = localStorage.getItem(STORAGE_KEY);
   if (!key) return;
   try {
@@ -600,6 +679,20 @@ async def agent_guide(request: Request):
 @app.get("/v1/health", response_model=HealthResponse)
 async def health():
     return HealthResponse(status="ok", version=APP_VERSION)
+
+
+@app.get("/v1/gate/status")
+async def gate_status():
+    return {"required": bool(REGISTRATION_TOKEN)}
+
+
+@app.post("/v1/gate/check")
+async def gate_check(x_registration_token: Optional[str] = Header(default=None)):
+    if not REGISTRATION_TOKEN:
+        return {"ok": True, "required": False}
+    if not x_registration_token or not secrets.compare_digest(x_registration_token, REGISTRATION_TOKEN):
+        raise HTTPException(status_code=401, detail="Invalid access token")
+    return {"ok": True, "required": True}
 
 
 @app.post("/v1/agents/register", response_model=RegisterResponse, status_code=201)
