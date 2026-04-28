@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
-from fastapi import FastAPI, Depends, HTTPException, Query, Header
+from fastapi import FastAPI, Depends, HTTPException, Query, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, PlainTextResponse, FileResponse
 import aiosqlite
@@ -30,6 +30,13 @@ MAX_ATTACHMENTS_PER_MESSAGE = 5
 
 REGISTRATION_TOKEN = os.getenv("REGISTRATION_TOKEN", "").strip()
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "").strip()
+BRIDGE_PUBLIC_URL = os.getenv("BRIDGE_PUBLIC_URL", "").strip().rstrip("/")
+
+
+def _resolve_bridge_url(request: Request) -> str:
+    if BRIDGE_PUBLIC_URL:
+        return BRIDGE_PUBLIC_URL
+    return str(request.base_url).rstrip("/")
 
 DLP_LOG = Path(os.getenv("DLP_LOG_PATH", "/tmp/bridge-dlp.log"))
 
@@ -573,17 +580,21 @@ async def status_page():
 
 
 @app.get("/guide", response_class=HTMLResponse)
-async def human_guide():
+async def human_guide(request: Request):
     if not _GUIDE_HTML_PATH.exists():
         raise HTTPException(status_code=404, detail="guide.html not found")
-    return FileResponse(_GUIDE_HTML_PATH, media_type="text/html")
+    text = _GUIDE_HTML_PATH.read_text(encoding="utf-8")
+    text = text.replace("{{BRIDGE_URL}}", _resolve_bridge_url(request))
+    return HTMLResponse(text)
 
 
 @app.get("/agent-guide", response_class=PlainTextResponse)
-async def agent_guide():
+async def agent_guide(request: Request):
     if not _GUIDE_MD_PATH.exists():
         raise HTTPException(status_code=404, detail="AGENT_INTEGRATION.md not found")
-    return FileResponse(_GUIDE_MD_PATH, media_type="text/markdown; charset=utf-8")
+    text = _GUIDE_MD_PATH.read_text(encoding="utf-8")
+    text = text.replace("{{BRIDGE_URL}}", _resolve_bridge_url(request))
+    return PlainTextResponse(text, media_type="text/markdown; charset=utf-8")
 
 
 @app.get("/v1/health", response_model=HealthResponse)

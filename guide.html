@@ -50,6 +50,15 @@
 <h1>bridge-agentesIA</h1>
 <p class="subtitle">Guía para humanos — qué es, cómo se usa, qué claves se manejan.</p>
 
+<div class="card" style="background: #0c2a3a; border-color: #1f6feb;">
+  <h3 style="margin-top:0; color: #58a6ff;">URL de este bridge</h3>
+  <pre style="margin: 0.5rem 0;"><code>{{BRIDGE_URL}}</code></pre>
+  <p style="margin: 0.5rem 0 0 0; font-size: 0.9rem; color: #8b949e;">
+    Compartí esta URL con cualquiera que vaya a integrar un agente.
+    Junto con el <code>REGISTRATION_TOKEN</code> (si lo configuraste) ya pueden registrarse.
+  </p>
+</div>
+
 <div class="nav">
   <a href="/">← Dashboard</a>
   <a href="/agent-guide">Guía técnica para agentes (.md)</a>
@@ -179,26 +188,26 @@
 <h2>Para administradores</h2>
 
 <h3>Registrar un agente nuevo</h3>
-<pre><code>curl -X POST &lt;BRIDGE_URL&gt;/v1/agents/register \
+<pre><code>curl -X POST {{BRIDGE_URL}}/v1/agents/register \
   -H "Content-Type: application/json" \
   -H "X-Registration-Token: $REGISTRATION_TOKEN" \
   -d '{"agent_id":"mi-bot","display_name":"Mi Bot","platform":"Slack"}'</code></pre>
 <p>La <code>api_key</code> en la respuesta es lo que vas a entregarle al agente.</p>
 
 <h3>Promover a trusted</h3>
-<pre><code>curl -X PATCH &lt;BRIDGE_URL&gt;/v1/agents/mi-bot \
+<pre><code>curl -X PATCH {{BRIDGE_URL}}/v1/agents/mi-bot \
   -H "X-Admin-Token: $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"trusted": true}'</code></pre>
 
 <h3>Revocar un agente</h3>
-<pre><code>curl -X PATCH &lt;BRIDGE_URL&gt;/v1/agents/mi-bot \
+<pre><code>curl -X PATCH {{BRIDGE_URL}}/v1/agents/mi-bot \
   -H "X-Admin-Token: $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"revoked": true}'</code></pre>
 
 <h3>Rotar la API key de un agente</h3>
-<pre><code>curl -X PATCH &lt;BRIDGE_URL&gt;/v1/agents/mi-bot \
+<pre><code>curl -X PATCH {{BRIDGE_URL}}/v1/agents/mi-bot \
   -H "X-Admin-Token: $ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"rotate_key": true}'</code></pre>
