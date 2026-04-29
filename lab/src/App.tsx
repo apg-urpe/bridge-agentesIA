@@ -937,56 +937,56 @@ function App() {
                       style={{
                         display: 'flex',
                         alignItems: 'center',
-                        gap: '8px',
+                        gap: '10px',
                         width: '100%',
-                        padding: '8px 10px',
+                        padding: '12px 12px',
                         background: '#14142a',
                         border: `1px solid ${groupColor}33`,
-                        borderLeft: `3px solid ${groupColor}`,
+                        borderLeft: `4px solid ${groupColor}`,
                         borderRadius: isOpen ? '6px 6px 0 0' : '6px',
                         cursor: 'pointer',
                         textAlign: 'left',
-                        fontFamily: "'Inter', sans-serif",
                       }}
                     >
                       <span style={{
-                        fontSize: '10px',
+                        fontSize: '16px',
                         color: groupColor,
-                        width: '10px',
+                        width: '14px',
                         display: 'inline-block',
                         transition: 'transform 0.15s',
                         transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)',
+                        flexShrink: 0,
                       }}>▶</span>
                       <div style={{
-                        width: '8px',
-                        height: '8px',
+                        width: '10px',
+                        height: '10px',
                         borderRadius: '50%',
                         background: groupColor,
                         boxShadow: `0 0 6px ${groupColor}80`,
                         flexShrink: 0,
                       }} />
                       <span style={{
-                        fontSize: '12px',
+                        fontSize: '16px',
                         fontWeight: 700,
                         color: groupColor,
                       }}>
                         {getAgentDisplayName(group.agentId)}
                       </span>
                       <span style={{
-                        fontSize: '10px',
+                        fontSize: '16px',
                         color: '#6b7280',
                         marginLeft: 'auto',
                       }}>
                         {lastTimeStr}
                       </span>
                       <span style={{
-                        fontSize: '10px',
+                        fontSize: '16px',
                         fontWeight: 600,
-                        color: '#9ca3af',
+                        color: '#e5e7eb',
                         background: '#1e1e3a',
-                        padding: '2px 6px',
-                        borderRadius: '8px',
-                        minWidth: '20px',
+                        padding: '2px 10px',
+                        borderRadius: '10px',
+                        minWidth: '28px',
                         textAlign: 'center',
                       }}>
                         {group.messages.length}
