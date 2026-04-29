@@ -3,16 +3,18 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   loadAssets,
   dispatchAssetMessages,
-  dispatchAgentMessages,
-  startPolling,
-  stopPolling,
+  syncAgents,
+  startFeed,
+  stopFeed,
   onNewMessages,
+  onAgentsChanged,
+  onFeedStatus,
   getCharacterId,
   getAgentDisplayName,
-  AGENT_CONFIGS,
-  type AgentConfig,
+  getAgentEntry,
+  type AgentEntry,
+  type LiveMessage,
 } from './bridgeAdapter.ts';
-import { fetchAgents, type BridgeMessage } from './bridgeClient.ts';
 import { OfficeCanvas } from './office/components/OfficeCanvas.js';
 import { ToolOverlay } from './office/components/ToolOverlay.js';
 import { OfficeState } from './office/engine/officeState.js';
@@ -35,6 +37,133 @@ function getOfficeState(): OfficeState {
   return officeStateRef.current;
 }
 
+// ── Encounter animation ─────────────────────────────────────────────────
+//
+// On each new message we make the sender walk to an adjacent tile of the
+// recipient, show a speech bubble with the message, and linger. Multiple
+// messages from the same sender queue up FIFO and chain directly: the agent
+// goes recipient→recipient without returning home in between, and only
+// walks back to their seat once the queue is empty.
+
+const ENCOUNTER_LINGER_MS = 11000;  // time at each recipient (walk-out + chat)
+
+interface PendingEncounter {
+  toAgentId: string;
+  text: string;
+}
+
+const senderQueues = new Map<number, PendingEncounter[]>();
+const busySenders = new Set<number>();
+
+type SetSpeech = (characterId: number, text: string | null) => void;
+
+function enqueueEncounter(
+  os: OfficeState,
+  fromAgentId: string,
+  toAgentId: string,
+  text: string,
+  setSpeech: SetSpeech,
+): void {
+  const senderId = getCharacterId(fromAgentId);
+  if (senderId === null) return;
+
+  const q = senderQueues.get(senderId) ?? [];
+  q.push({ toAgentId, text });
+  senderQueues.set(senderId, q);
+
+  if (!busySenders.has(senderId)) {
+    pumpQueue(os, senderId, setSpeech);
+  }
+}
+
+function pumpQueue(os: OfficeState, senderId: number, setSpeech: SetSpeech): void {
+  const q = senderQueues.get(senderId);
+  const next = q?.shift();
+  if (!next) {
+    // Queue empty — clear bubble and walk home.
+    busySenders.delete(senderId);
+    senderQueues.delete(senderId);
+    setSpeech(senderId, null);
+    const sender = os.characters.get(senderId);
+    const senderSeat = sender?.seatId ? os.seats.get(sender.seatId) : null;
+    if (senderSeat) {
+      os.walkToTile(senderId, senderSeat.seatCol, senderSeat.seatRow);
+    }
+    return;
+  }
+  busySenders.add(senderId);
+  runEncounter(os, senderId, next, setSpeech, () => {
+    pumpQueue(os, senderId, setSpeech);
+  });
+}
+
+function runEncounter(
+  os: OfficeState,
+  senderId: number,
+  msg: PendingEncounter,
+  setSpeech: SetSpeech,
+  onDone: () => void,
+): void {
+  const receiverId = getCharacterId(msg.toAgentId);
+  const sender = os.characters.get(senderId);
+  const receiver = receiverId !== null ? os.characters.get(receiverId) : undefined;
+
+  const canAnimate = !!sender && !!receiver && receiverId !== senderId;
+  const target = (canAnimate && sender)
+    ? pickAdjacentWalkable(os, receiver!.tileCol, receiver!.tileRow, sender.tileCol, sender.tileRow)
+    : null;
+
+  if (canAnimate && target && os.walkToTile(senderId, target.col, target.row)) {
+    os.showWaitingBubble(senderId);
+  }
+  // Always show the speech bubble — even if we couldn't walk, we want the
+  // viewer to see who said what.
+  setSpeech(senderId, msg.text);
+
+  // Pin the agent at the destination: while in CharacterState.IDLE the engine
+  // counts down `wanderTimer` (2–20s) and then walks them to a random tile.
+  // We override the timer every tick so they stay still during the encounter.
+  // Also reset wanderCount so the auto "return to seat" logic doesn't fire.
+  const pinHandle = window.setInterval(() => {
+    const ch = os.characters.get(senderId);
+    if (ch) {
+      ch.wanderTimer = 9999;
+      ch.wanderCount = 0;
+    }
+  }, 250);
+
+  window.setTimeout(() => {
+    window.clearInterval(pinHandle);
+    onDone();
+  }, ENCOUNTER_LINGER_MS);
+}
+
+const ADJ_OFFSETS: Array<[number, number]> = [
+  [0, 1], [0, -1], [1, 0], [-1, 0],
+  [1, 1], [-1, -1], [1, -1], [-1, 1],
+];
+
+/** Pick the walkable neighbor of the receiver closest to the sender's
+ * current tile, so the sender ends up on the natural side. */
+function pickAdjacentWalkable(
+  os: OfficeState,
+  receiverCol: number,
+  receiverRow: number,
+  fromCol: number,
+  fromRow: number,
+): { col: number; row: number } | null {
+  const walkSet = new Set(os.walkableTiles.map((t) => `${t.col},${t.row}`));
+  let best: { col: number; row: number; dist: number } | null = null;
+  for (const [dc, dr] of ADJ_OFFSETS) {
+    const c = receiverCol + dc;
+    const r = receiverRow + dr;
+    if (!walkSet.has(`${c},${r}`)) continue;
+    const dist = Math.abs(c - fromCol) + Math.abs(r - fromRow);
+    if (!best || dist < best.dist) best = { col: c, row: r, dist };
+  }
+  return best ? { col: best.col, row: best.row } : null;
+}
+
 // ── Message Log Item ───────────────────────────────────────────────────────
 
 interface LogMessage {
@@ -51,11 +180,12 @@ function App() {
   const [layoutReady, setLayoutReady] = useState(false);
   const [zoom, setZoom] = useState(2);
   const [messages, setMessages] = useState<LogMessage[]>([]);
-  const [agents] = useState<number[]>(() => AGENT_CONFIGS.map((_, i) => i + 1));
+  const [agentEntries, setAgentEntries] = useState<AgentEntry[]>([]);
+  const [agentSpeech, setAgentSpeech] = useState<Record<number, string>>({});
   const panRef = useRef({ x: 0, y: 0 });
   const containerRef = useRef<HTMLDivElement>(null);
   const logRef = useRef<HTMLDivElement>(null);
-  const [bridgeOnline, setBridgeOnline] = useState(false);
+  const [feedStatus, setFeedStatus] = useState<'connecting' | 'open' | 'closed'>('connecting');
 
   // Load assets and init Bridge connection
   useEffect(() => {
@@ -89,7 +219,16 @@ function App() {
         } else if (msg.type === 'agentCreated') {
           const id = msg.id as number;
           if (!os.characters.has(id)) {
-            os.addAgent(id);
+            os.addAgent(id, msg.palette as number | undefined, msg.hueShift as number | undefined);
+          }
+        } else if (msg.type === 'agentAppearanceChanged') {
+          // Self-service appearance update from PATCH /v1/me/appearance: hot-swap
+          // the character's palette/hueShift so the renderer retints next frame.
+          const id = msg.id as number;
+          const ch = os.characters.get(id);
+          if (ch) {
+            if (typeof msg.palette === 'number') ch.palette = msg.palette;
+            if (typeof msg.hueShift === 'number') ch.hueShift = msg.hueShift;
           }
         }
       };
@@ -99,24 +238,41 @@ function App() {
       // Step 3: Dispatch asset messages
       dispatchAssetMessages();
 
-      // Step 4: Fetch bridge agents and create characters
-      const bridgeAgents = await fetchAgents();
-      if (bridgeAgents.length > 0) {
-        setBridgeOnline(true);
-        dispatchAgentMessages(bridgeAgents);
-      }
+      // Step 4: Build dynamic agent registry from /v1/agents
+      await syncAgents();
 
-      // Step 5: Start polling for messages
-      startPolling(5000);
+      // Step 5: Subscribe to SSE feed for live messages
+      startFeed();
     }
 
     init();
-    return () => { cancelled = true; stopPolling(); };
+    return () => { cancelled = true; stopFeed(); };
+  }, []);
+
+  // Track agent registry changes (header dots, log labels)
+  useEffect(() => {
+    return onAgentsChanged((entries) => setAgentEntries(entries));
+  }, []);
+
+  // Track feed connection status
+  useEffect(() => {
+    return onFeedStatus((s) => setFeedStatus(s));
   }, []);
 
   // Listen for new Bridge messages
   useEffect(() => {
-    const unsub = onNewMessages((newMsgs: BridgeMessage[]) => {
+    const setSpeech: SetSpeech = (id, text) => {
+      setAgentSpeech((prev) => {
+        if (text === null) {
+          if (!(id in prev)) return prev;
+          const { [id]: _gone, ...rest } = prev;
+          return rest;
+        }
+        return { ...prev, [id]: text };
+      });
+    };
+
+    const unsub = onNewMessages((newMsgs: LiveMessage[]) => {
       const os = getOfficeState();
 
       for (const msg of newMsgs) {
@@ -124,24 +280,15 @@ function App() {
         setMessages((prev) => [
           ...prev.slice(-99), // keep last 100
           {
-            id: msg.message_id,
-            from: msg.from_agent,
-            to: msg.to_agent,
-            content: msg.content,
-            timestamp: msg.timestamp,
+            id: msg.id,
+            from: msg.from,
+            to: msg.to,
+            content: msg.message,
+            timestamp: msg.created_at,
           },
         ]);
 
-        // Animate sender agent
-        const senderId = getCharacterId(msg.from_agent);
-        if (senderId !== null) {
-          os.setAgentActive(senderId, true);
-          os.showWaitingBubble(senderId);
-          // Deactivate after 8 seconds
-          setTimeout(() => {
-            os.setAgentActive(senderId, false);
-          }, 8000);
-        }
+        enqueueEncounter(os, msg.from, msg.to, msg.message, setSpeech);
       }
     });
     return unsub;
@@ -179,6 +326,12 @@ function App() {
       </div>
     );
   }
+
+  const visibleAgents = agentEntries.slice(0, 8); // header gets crowded past this
+  const characterIds = agentEntries.map((a) => a.characterId);
+  const agentNamesById: Record<number, string> = {};
+  for (const a of agentEntries) agentNamesById[a.characterId] = a.displayName;
+  const bridgeOnline = feedStatus === 'open';
 
   return (
     <div style={{ width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column', background: '#0a0a0f', overflow: 'hidden' }}>
@@ -218,7 +371,7 @@ function App() {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
           {/* Agent status dots */}
-          {AGENT_CONFIGS.map((agent: AgentConfig) => (
+          {visibleAgents.map((agent) => (
             <div key={agent.agentId} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <div style={{
                 width: '8px',
@@ -232,7 +385,12 @@ function App() {
               </span>
             </div>
           ))}
-          <div style={{
+          {agentEntries.length > visibleAgents.length && (
+            <span style={{ fontSize: '11px', color: '#6b7280', fontFamily: "'Inter', sans-serif" }}>
+              +{agentEntries.length - visibleAgents.length}
+            </span>
+          )}
+          <div title={`feed: ${feedStatus}`} style={{
             width: '6px',
             height: '6px',
             borderRadius: '50%',
@@ -265,7 +423,7 @@ function App() {
           />
           <ToolOverlay
             officeState={getOfficeState()}
-            agents={agents}
+            agents={characterIds}
             agentTools={{}}
             subagentCharacters={[]}
             containerRef={containerRef}
@@ -273,6 +431,8 @@ function App() {
             panRef={panRef}
             onCloseAgent={() => {}}
             alwaysShowOverlay={true}
+            agentNames={agentNamesById}
+            agentSpeech={agentSpeech}
           />
           <ZoomControls zoom={zoom} onZoomChange={handleZoomChange} />
           {/* Vignette */}
@@ -332,16 +492,20 @@ function App() {
                 fontSize: '12px',
                 fontFamily: "'Inter', sans-serif",
               }}>
-                {bridgeOnline
+                {feedStatus === 'open'
                   ? 'Waiting for messages...'
-                  : 'Configure VITE_BRIDGE_API_KEY in .env to connect'}
+                  : feedStatus === 'connecting'
+                    ? 'Connecting to bridge...'
+                    : 'Disconnected — retrying'}
               </div>
             ) : (
               messages.map((msg) => {
-                const fromConfig = AGENT_CONFIGS.find((a) => a.agentId === msg.from);
-                const toConfig = AGENT_CONFIGS.find((a) => a.agentId === msg.to);
+                const fromEntry = getAgentEntry(msg.from);
+                const toEntry = getAgentEntry(msg.to);
                 const time = new Date(msg.timestamp);
-                const timeStr = time.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+                const timeStr = isNaN(time.getTime())
+                  ? msg.timestamp
+                  : time.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
 
                 return (
                   <div key={msg.id} style={{
@@ -357,13 +521,13 @@ function App() {
                         width: '6px',
                         height: '6px',
                         borderRadius: '50%',
-                        background: fromConfig?.color || '#6b7280',
+                        background: fromEntry?.color || '#6b7280',
                         flexShrink: 0,
                       }} />
                       <span style={{
                         fontSize: '11px',
                         fontWeight: 600,
-                        color: fromConfig?.color || '#9ca3af',
+                        color: fromEntry?.color || '#9ca3af',
                         fontFamily: "'Inter', sans-serif",
                       }}>
                         {getAgentDisplayName(msg.from)}
@@ -371,7 +535,7 @@ function App() {
                       <span style={{ fontSize: '10px', color: '#4b5563' }}>→</span>
                       <span style={{
                         fontSize: '11px',
-                        color: toConfig?.color || '#9ca3af',
+                        color: toEntry?.color || '#9ca3af',
                         fontFamily: "'Inter', sans-serif",
                       }}>
                         {getAgentDisplayName(msg.to)}

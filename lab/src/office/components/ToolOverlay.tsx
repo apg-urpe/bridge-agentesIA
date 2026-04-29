@@ -33,6 +33,10 @@ interface ToolOverlayProps {
   panRef: React.RefObject<{ x: number; y: number }>;
   onCloseAgent: (id: number) => void;
   alwaysShowOverlay: boolean;
+  /** Optional id → display name map. Falls back to activity text when missing. */
+  agentNames?: Record<number, string>;
+  /** Optional id → currently-speaking message (renders a bubble above nameplate). */
+  agentSpeech?: Record<number, string>;
 }
 
 /** Derive a short human-readable activity string from tools/status */
@@ -76,6 +80,8 @@ export function ToolOverlay({
   panRef,
   onCloseAgent,
   alwaysShowOverlay,
+  agentNames,
+  agentSpeech,
 }: ToolOverlayProps) {
   const [, setTick] = useState(0);
   useEffect(() => {
@@ -136,7 +142,15 @@ export function ToolOverlay({
             activityText = sub ? sub.label : 'Subtask';
           }
         } else {
-          activityText = getActivityText(id, agentTools, ch.isActive);
+          const baseActivity = getActivityText(id, agentTools, ch.isActive);
+          // Prefer the registered display name; fall back to activity text if
+          // we don't have a name (and to keep the live tool status when active).
+          const name = agentNames?.[id];
+          if (name && baseActivity === 'Idle') {
+            activityText = name;
+          } else {
+            activityText = baseActivity;
+          }
         }
 
         // Determine dot color
@@ -158,6 +172,8 @@ export function ToolOverlay({
         const totalTokens = ch.inputTokens + ch.outputTokens;
         const tokenRatio = totalTokens / MAX_CONTEXT_TOKENS;
         const hasExtraLines = !!(ch.folderName || teamRoleLabel);
+        const speechText = !isSub ? agentSpeech?.[id] : undefined;
+        const hasSpeech = !!speechText;
 
         return (
           <div
@@ -165,12 +181,34 @@ export function ToolOverlay({
             className="absolute flex flex-col items-center -translate-x-1/2"
             style={{
               left: screenX,
-              top: screenY - (hasExtraLines ? 34 : 28),
+              top: screenY - (hasExtraLines ? 34 : 28) - (hasSpeech ? 56 : 0),
               pointerEvents: isSelected ? 'auto' : 'none',
               opacity: alwaysShowOverlay && !isSelected && !isHovered ? (isSub ? 0.5 : 0.75) : 1,
               zIndex: isSelected ? 42 : 41,
             }}
           >
+            {hasSpeech && (
+              <div
+                style={{
+                  background: '#0f0f1a',
+                  border: '2px solid #6366f1',
+                  borderRadius: 10,
+                  color: '#e5e7eb',
+                  fontSize: '11px',
+                  fontFamily: "'Inter', sans-serif",
+                  lineHeight: 1.3,
+                  padding: '6px 10px',
+                  marginBottom: 6,
+                  maxWidth: 220,
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                  boxShadow: '0 2px 10px rgba(99, 102, 241, 0.4)',
+                  textAlign: 'center',
+                }}
+              >
+                {speechText}
+              </div>
+            )}
             <div className="flex items-center border-border px-8 pt-2 pb-4 gap-5 pixel-panel whitespace-nowrap max-w-2xs">
               {dotColor && (
                 <span

@@ -1,7 +1,9 @@
 /**
- * Bridge Adapter — replaces browserMock.ts
- * Loads pixel art assets the same way browserMock did, then connects
- * to the URPE AI Lab Bridge to drive agent characters in real time.
+ * Bridge Adapter — connects the pixel office canvas to the Bridge.
+ *
+ * Loads pixel art assets, builds a dynamic agent registry from the public
+ * /v1/agents endpoint, and forwards live messages from the SSE feed
+ * (/v1/office/feed) to listeners. No API key required.
  */
 
 import { rgbaToHex } from '../shared/assets/colorUtils.ts';
@@ -21,34 +23,141 @@ import type {
   CatalogEntry,
   CharacterDirectionSprites,
 } from '../shared/assets/types.ts';
-import { fetchAgents, fetchThreads, type BridgeAgent, type BridgeMessage } from './bridgeClient.ts';
+import {
+  connectOfficeFeed,
+  fetchAgents,
+  type BridgeAgent,
+  type OfficeFeedEvent,
+} from './bridgeClient.ts';
 
-// ── Agent config ──────────────────────────────────────────────────────────────
+// ── Agent registry (built at runtime from /v1/agents) ──────────────────────
 
-export interface AgentConfig {
+export interface AgentEntry {
   agentId: string;
   displayName: string;
-  palette: number;
-  color: string;
+  platform: string | null;
+  characterId: number;   // 1-based numeric id for OfficeState
+  palette: number;       // 0..PALETTE_COUNT-1
+  hueShift: number;      // 0..360 for color variety within a palette
+  color: string;         // hex used by header dots / log
 }
 
-export const AGENT_CONFIGS: AgentConfig[] = [
-  { agentId: 'nexus-andres', displayName: 'NEXUS', palette: 0, color: '#3b82f6' },
-  { agentId: 'rocky-assistant', displayName: 'Rocky', palette: 1, color: '#22c55e' },
-  { agentId: 'pepper-potts', displayName: 'Pepper', palette: 2, color: '#ef4444' },
-  { agentId: 'loki', displayName: 'Loki', palette: 3, color: '#a855f7' },
-  { agentId: 'clawd-assistant', displayName: 'Clawd', palette: 4, color: '#f97316' },
+const PALETTE_COUNT = 6;
+const COLOR_RING = [
+  '#3b82f6', // blue
+  '#22c55e', // green
+  '#ef4444', // red
+  '#a855f7', // purple
+  '#f97316', // orange
+  '#eab308', // yellow
 ];
 
-export function getAgentConfig(agentId: string): AgentConfig | undefined {
-  return AGENT_CONFIGS.find((c) => c.agentId === agentId);
+const agentRegistry = new Map<string, AgentEntry>();
+const registryListeners: Array<(entries: AgentEntry[]) => void> = [];
+
+function emitRegistry(): void {
+  const entries = Array.from(agentRegistry.values());
+  for (const l of registryListeners) l(entries);
+}
+
+export function onAgentsChanged(listener: (entries: AgentEntry[]) => void): () => void {
+  registryListeners.push(listener);
+  listener(Array.from(agentRegistry.values()));
+  return () => {
+    const idx = registryListeners.indexOf(listener);
+    if (idx >= 0) registryListeners.splice(idx, 1);
+  };
+}
+
+export function getAgentEntry(agentId: string): AgentEntry | undefined {
+  return agentRegistry.get(agentId);
 }
 
 export function getAgentDisplayName(agentId: string): string {
-  return getAgentConfig(agentId)?.displayName || agentId;
+  return agentRegistry.get(agentId)?.displayName || agentId;
 }
 
-// ── PNG decode (same as browserMock) ─────────────────────────────────────────
+export function getCharacterId(agentId: string): number | null {
+  return agentRegistry.get(agentId)?.characterId ?? null;
+}
+
+/** Resolve appearance with backend overrides falling through to a stable hash. */
+function deriveAppearance(ba: BridgeAgent): { palette: number; hueShift: number; color: string } {
+  const palette = ba.palette ?? (stableHash(ba.agent_id) % PALETTE_COUNT);
+  const hueShift = ba.hue_shift ?? ((stableHash(ba.agent_id + ':hue') % 24) * 15);
+  // If the agent picked their own hue, use it directly as the UI accent so
+  // dots/log labels match the in-office tint. Otherwise fall back to the ring.
+  const color = ba.hue_shift !== null && ba.hue_shift !== undefined
+    ? `hsl(${ba.hue_shift}, 75%, 60%)`
+    : COLOR_RING[stableHash(ba.agent_id) % COLOR_RING.length];
+  return { palette, hueShift, color };
+}
+
+/**
+ * Build/update the registry from /v1/agents. Stable: existing characterIds are
+ * preserved across refreshes so animations don't jump. New agents get the next
+ * free numeric id. Existing agents whose `palette` or `hue_shift` changed get
+ * a hot-swap event so the engine retints the on-screen sprite without reload.
+ */
+async function refreshAgents(): Promise<AgentEntry[]> {
+  const bridgeAgents: BridgeAgent[] = await fetchAgents();
+  bridgeAgents.sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''));
+
+  let nextId = 1;
+  for (const e of agentRegistry.values()) {
+    if (e.characterId >= nextId) nextId = e.characterId + 1;
+  }
+
+  let changed = false;
+  for (const ba of bridgeAgents) {
+    const { palette, hueShift, color } = deriveAppearance(ba);
+    const existing = agentRegistry.get(ba.agent_id);
+    if (existing) {
+      if (existing.palette !== palette || existing.hueShift !== hueShift) {
+        existing.palette = palette;
+        existing.hueShift = hueShift;
+        existing.color = color;
+        existing.displayName = ba.display_name || ba.agent_id;
+        existing.platform = ba.platform ?? null;
+        window.dispatchEvent(new MessageEvent('message', {
+          data: {
+            type: 'agentAppearanceChanged',
+            id: existing.characterId,
+            palette,
+            hueShift,
+          },
+        }));
+        changed = true;
+      }
+      continue;
+    }
+    const entry: AgentEntry = {
+      agentId: ba.agent_id,
+      displayName: ba.display_name || ba.agent_id,
+      platform: ba.platform ?? null,
+      characterId: nextId++,
+      palette,
+      hueShift,
+      color,
+    };
+    agentRegistry.set(ba.agent_id, entry);
+    changed = true;
+  }
+
+  if (changed) emitRegistry();
+  return Array.from(agentRegistry.values());
+}
+
+function stableHash(s: string): number {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return h;
+}
+
+// ── PNG decode ─────────────────────────────────────────────────────────────
 
 interface DecodedPng {
   width: number;
@@ -168,7 +277,7 @@ async function decodeFurnitureFromPng(
   return sprites;
 }
 
-// ── Asset loading ─────────────────────────────────────────────────────────────
+// ── Asset loading ─────────────────────────────────────────────────────────
 
 interface AssetPayload {
   characters: CharacterDirectionSprites[];
@@ -219,7 +328,7 @@ export async function loadAssets(): Promise<void> {
   console.log(`[BridgeAdapter] Assets ready — ${characters.length} chars, ${floorSprites.length} floors, ${wallSets.length} walls, ${catalog.length} furniture`);
 }
 
-/** Dispatch asset messages to the webview engine (same format as browserMock) */
+/** Dispatch asset messages to the engine. */
 export function dispatchAssetMessages(): void {
   if (!assetPayload) return;
   const { characters, floorSprites, wallSets, furnitureCatalog, furnitureSprites, layout } = assetPayload;
@@ -243,90 +352,89 @@ export function dispatchAssetMessages(): void {
   console.log('[BridgeAdapter] Asset messages dispatched');
 }
 
-/** Dispatch agent creation messages for Bridge agents */
-export function dispatchAgentMessages(bridgeAgents: BridgeAgent[]): void {
-  // Create agents for each known config, in order
-  for (let i = 0; i < AGENT_CONFIGS.length; i++) {
-    const config = AGENT_CONFIGS[i];
-    const bridgeAgent = bridgeAgents.find((a) => a.agent_id === config.agentId);
-    if (!bridgeAgent) continue;
-
+/**
+ * Refresh the agent registry from /v1/agents and dispatch `agentCreated`
+ * events for any new entries. Returns the up-to-date registry.
+ */
+export async function syncAgents(): Promise<AgentEntry[]> {
+  const before = new Set(agentRegistry.keys());
+  const entries = await refreshAgents();
+  for (const entry of entries) {
+    if (before.has(entry.agentId)) continue;
     window.dispatchEvent(new MessageEvent('message', {
       data: {
         type: 'agentCreated',
-        id: i + 1, // numeric IDs 1-5
+        id: entry.characterId,
+        palette: entry.palette,
+        hueShift: entry.hueShift,
       },
     }));
   }
-
-  console.log(`[BridgeAdapter] Created ${AGENT_CONFIGS.length} agent characters`);
+  console.log(`[BridgeAdapter] Registry: ${entries.length} agents`);
+  return entries;
 }
 
-// ── Polling ─────────────────────────────────────────────────────────────────
+// ── Live message feed ─────────────────────────────────────────────────────
 
-let lastSeenMessageId: string | null = null;
-let pollingInterval: number | null = null;
-let messageListeners: Array<(messages: BridgeMessage[]) => void> = [];
+export interface LiveMessage {
+  id: string;
+  from: string;
+  to: string;
+  message: string;
+  thread_id: string | null;
+  created_at: string;
+}
 
-export function onNewMessages(listener: (messages: BridgeMessage[]) => void): () => void {
+let messageListeners: Array<(messages: LiveMessage[]) => void> = [];
+let cancelFeed: (() => void) | null = null;
+let agentRefreshHandle: number | null = null;
+let statusListeners: Array<(s: 'connecting' | 'open' | 'closed') => void> = [];
+
+export function onNewMessages(listener: (messages: LiveMessage[]) => void): () => void {
   messageListeners.push(listener);
   return () => { messageListeners = messageListeners.filter((l) => l !== listener); };
 }
 
-async function pollBridge(): Promise<void> {
-  const threads = await fetchThreads();
-  if (threads.length === 0) return;
-
-  // Collect all messages, sorted by timestamp
-  const allMessages: BridgeMessage[] = [];
-  for (const thread of threads) {
-    if (thread.messages) {
-      allMessages.push(...thread.messages);
-    }
-  }
-  allMessages.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-
-  if (allMessages.length === 0) return;
-
-  // Find new messages since last poll
-  let newMessages: BridgeMessage[] = [];
-  if (lastSeenMessageId) {
-    const lastIdx = allMessages.findIndex((m) => m.message_id === lastSeenMessageId);
-    if (lastIdx >= 0) {
-      newMessages = allMessages.slice(lastIdx + 1);
-    }
-  } else {
-    // First poll — show last 10 messages
-    newMessages = allMessages.slice(-10);
-  }
-
-  if (allMessages.length > 0) {
-    lastSeenMessageId = allMessages[allMessages.length - 1].message_id;
-  }
-
-  if (newMessages.length > 0) {
-    for (const listener of messageListeners) {
-      listener(newMessages);
-    }
-  }
+export function onFeedStatus(listener: (s: 'connecting' | 'open' | 'closed') => void): () => void {
+  statusListeners.push(listener);
+  return () => { statusListeners = statusListeners.filter((l) => l !== listener); };
 }
 
-export function startPolling(intervalMs = 5000): void {
-  if (pollingInterval) return;
-  pollBridge(); // immediate first poll
-  pollingInterval = window.setInterval(pollBridge, intervalMs);
-  console.log(`[BridgeAdapter] Polling started (${intervalMs}ms)`);
-}
-
-export function stopPolling(): void {
-  if (pollingInterval) {
-    clearInterval(pollingInterval);
-    pollingInterval = null;
+function handleFeedEvent(event: OfficeFeedEvent): void {
+  if (event.type !== 'message') return;
+  // If the sender/recipient is unknown locally, refresh the registry. This
+  // covers the case where a new agent registered after the SPA loaded.
+  if (!agentRegistry.has(event.from) || !agentRegistry.has(event.to)) {
+    syncAgents().catch((err) => console.warn('[BridgeAdapter] syncAgents failed', err));
   }
+  const live: LiveMessage = {
+    id: event.id,
+    from: event.from,
+    to: event.to,
+    message: event.message,
+    thread_id: event.thread_id,
+    created_at: event.created_at,
+  };
+  for (const listener of messageListeners) listener([live]);
 }
 
-/** Get the numeric character ID for a bridge agent_id */
-export function getCharacterId(agentId: string): number | null {
-  const idx = AGENT_CONFIGS.findIndex((c) => c.agentId === agentId);
-  return idx >= 0 ? idx + 1 : null;
+/**
+ * Start the SSE subscription and a periodic /v1/agents refresh (every 30s)
+ * so newly registered agents appear without requiring a page reload.
+ */
+export function startFeed(): void {
+  if (cancelFeed) return;
+  cancelFeed = connectOfficeFeed(
+    handleFeedEvent,
+    (status) => { for (const l of statusListeners) l(status); },
+  );
+  agentRefreshHandle = window.setInterval(() => {
+    syncAgents().catch((err) => console.warn('[BridgeAdapter] periodic syncAgents failed', err));
+  }, 30000);
+  console.log('[BridgeAdapter] SSE feed started');
+}
+
+export function stopFeed(): void {
+  if (cancelFeed) { cancelFeed(); cancelFeed = null; }
+  if (agentRefreshHandle !== null) { clearInterval(agentRefreshHandle); agentRefreshHandle = null; }
 }

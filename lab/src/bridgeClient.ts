@@ -1,49 +1,70 @@
 /**
- * Bridge API client for URPE AI Lab agent communication.
- * In production (served by the Bridge itself at /office) uses same-origin.
- * In dev or standalone deploy, falls back to VITE_BRIDGE_URL.
+ * Bridge API client for the URPE AI Lab pixel office.
+ *
+ * Same-origin by default (the office is served by the bridge itself at
+ * /office/). Override with VITE_BRIDGE_URL when the SPA runs separately.
+ *
+ * The pixel office is a public live view: it consumes the SSE feed at
+ * `/v1/office/feed` and the public agents list at `/v1/agents`. No API key
+ * required. If the bridge has REGISTRATION_TOKEN set, the user can supply
+ * the gate token via VITE_BRIDGE_GATE_TOKEN or via the dashboard's
+ * `bridge-agentesia-gate-token` localStorage key (same origin → shared).
  */
+
+const GATE_STORAGE_KEY = 'bridge-agentesia-gate-token';
 
 function resolveBridgeUrl(): string {
   const envUrl = import.meta.env.VITE_BRIDGE_URL;
   if (envUrl) return envUrl.replace(/\/$/, '');
   if (typeof window !== 'undefined') return window.location.origin;
-  return 'https://bridge-agentesia-production.up.railway.app';
+  return '';
+}
+
+function resolveGateToken(): string {
+  const envToken = import.meta.env.VITE_BRIDGE_GATE_TOKEN;
+  if (envToken) return String(envToken);
+  if (typeof localStorage !== 'undefined') {
+    const stored = localStorage.getItem(GATE_STORAGE_KEY);
+    if (stored) return stored;
+  }
+  return '';
 }
 
 const BRIDGE_URL = resolveBridgeUrl();
-const API_KEY = import.meta.env.VITE_BRIDGE_API_KEY || '';
 
 export interface BridgeAgent {
   agent_id: string;
   display_name: string;
-  platform: string;
+  platform: string | null;
   trusted: boolean;
-  registered_at: string;
-}
-
-export interface BridgeMessage {
-  message_id: string;
-  thread_id: string;
-  from_agent: string;
-  to_agent: string;
-  content: string;
-  timestamp: string;
-  acked: boolean;
-}
-
-export interface BridgeThread {
-  thread_id: string;
-  participants: string[];
-  messages: BridgeMessage[];
   created_at: string;
-  last_activity: string;
+  /** Self-service appearance overrides; null = use hash-derived defaults. */
+  palette: number | null;
+  hue_shift: number | null;
 }
 
-/** Fetch list of registered agents (public, no auth) */
+/** Shape emitted by GET /v1/office/feed (SSE `data:` payload). */
+export interface OfficeFeedMessage {
+  type: 'message';
+  id: string;
+  from: string;
+  to: string;
+  message: string;
+  thread_id: string | null;
+  created_at: string;
+}
+
+export interface OfficeFeedHello {
+  type: 'hello';
+  at: string;
+}
+
+export type OfficeFeedEvent = OfficeFeedMessage | OfficeFeedHello;
+
+/** Fetch list of registered agents (public). */
 export async function fetchAgents(): Promise<BridgeAgent[]> {
   try {
-    const res = await fetch(`${BRIDGE_URL}/v1/agents`);
+    const res = await fetch(`${BRIDGE_URL}/v1/agents`, { cache: 'no-store' });
     if (!res.ok) return [];
     const data = await res.json();
     return Array.isArray(data) ? data : (data.agents || []);
@@ -53,47 +74,67 @@ export async function fetchAgents(): Promise<BridgeAgent[]> {
   }
 }
 
-/** Fetch threads with messages (requires API key) */
-export async function fetchThreads(): Promise<BridgeThread[]> {
-  if (!API_KEY) {
-    console.warn('[BridgeClient] No API key configured — using demo mode');
-    return [];
-  }
-  try {
-    const res = await fetch(`${BRIDGE_URL}/v1/threads`, {
-      headers: { 'X-API-Key': API_KEY },
-    });
-    if (!res.ok) return [];
-    const data = await res.json();
-    return Array.isArray(data) ? data : (data.threads || []);
-  } catch (e) {
-    console.error('[BridgeClient] fetchThreads error:', e);
-    return [];
-  }
-}
-
-/** Fetch inbox for a specific agent (requires API key) */
-export async function fetchInbox(agentId: string): Promise<BridgeMessage[]> {
-  if (!API_KEY) return [];
-  try {
-    const res = await fetch(`${BRIDGE_URL}/v1/inbox/${agentId}`, {
-      headers: { 'X-API-Key': API_KEY },
-    });
-    if (!res.ok) return [];
-    const data = await res.json();
-    return Array.isArray(data) ? data : (data.messages || []);
-  } catch (e) {
-    console.error('[BridgeClient] fetchInbox error:', e);
-    return [];
-  }
-}
-
-/** Check bridge health */
+/** Check bridge health (used as a connectivity ping). */
 export async function checkHealth(): Promise<boolean> {
   try {
-    const res = await fetch(`${BRIDGE_URL}/v1/health`);
+    const res = await fetch(`${BRIDGE_URL}/v1/health`, { cache: 'no-store' });
     return res.ok;
   } catch {
     return false;
   }
+}
+
+/**
+ * Subscribe to the SSE feed of new messages. Returns a cancel fn.
+ * Auto-reconnects with exponential backoff up to 15s.
+ */
+export function connectOfficeFeed(
+  onEvent: (event: OfficeFeedEvent) => void,
+  onStatus?: (status: 'connecting' | 'open' | 'closed') => void,
+): () => void {
+  let cancelled = false;
+  let source: EventSource | null = null;
+  let retryDelay = 1000;
+  let retryHandle: number | null = null;
+
+  function open(): void {
+    if (cancelled) return;
+    onStatus?.('connecting');
+
+    const token = resolveGateToken();
+    const qs = token ? `?token=${encodeURIComponent(token)}` : '';
+    source = new EventSource(`${BRIDGE_URL}/v1/office/feed${qs}`);
+
+    source.onopen = () => {
+      retryDelay = 1000;
+      onStatus?.('open');
+    };
+
+    source.onmessage = (e) => {
+      try {
+        const data = JSON.parse(e.data) as OfficeFeedEvent;
+        onEvent(data);
+      } catch (err) {
+        console.warn('[BridgeClient] bad SSE payload', err);
+      }
+    };
+
+    source.onerror = () => {
+      onStatus?.('closed');
+      source?.close();
+      source = null;
+      if (cancelled) return;
+      retryHandle = window.setTimeout(open, retryDelay);
+      retryDelay = Math.min(retryDelay * 2, 15000);
+    };
+  }
+
+  open();
+
+  return () => {
+    cancelled = true;
+    if (retryHandle !== null) clearTimeout(retryHandle);
+    source?.close();
+    source = null;
+  };
 }
