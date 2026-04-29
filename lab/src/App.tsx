@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { CSSProperties } from 'react';
 
 import {
   loadAssets,
@@ -17,6 +18,8 @@ import {
 } from './bridgeAdapter.ts';
 import { OfficeCanvas } from './office/components/OfficeCanvas.js';
 import { ToolOverlay } from './office/components/ToolOverlay.js';
+import { EditorState, EditorToolbar } from './office/editor/index.js';
+import { expandLayout, type ExpandDirection } from './office/editor/editorActions.js';
 import { OfficeState } from './office/engine/officeState.js';
 import { setFloorSprites } from './office/floorTiles.js';
 import { buildDynamicCatalog } from './office/layout/furnitureCatalog.js';
@@ -25,6 +28,8 @@ import { setCharacterTemplates } from './office/sprites/spriteData.js';
 import type { OfficeLayout } from './office/types.js';
 import { setWallSprites } from './office/wallTiles.js';
 import { ZoomControls } from './components/ZoomControls.js';
+import { useEditorActions } from './hooks/useEditorActions.js';
+import { clearDraftLayout, getDraftLayout } from './vscodeApi.js';
 
 // ── Game state (outside React) ─────────────────────────────────────────────
 
@@ -178,14 +183,19 @@ interface LogMessage {
 
 function App() {
   const [layoutReady, setLayoutReady] = useState(false);
-  const [zoom, setZoom] = useState(2);
   const [messages, setMessages] = useState<LogMessage[]>([]);
   const [agentEntries, setAgentEntries] = useState<AgentEntry[]>([]);
   const [agentSpeech, setAgentSpeech] = useState<Record<number, string>>({});
-  const panRef = useRef({ x: 0, y: 0 });
   const containerRef = useRef<HTMLDivElement>(null);
   const logRef = useRef<HTMLDivElement>(null);
   const [feedStatus, setFeedStatus] = useState<'connecting' | 'open' | 'closed'>('connecting');
+
+  // Editor (visual layout designer). isEditMode toggles via header button.
+  const editorStateRef = useRef<EditorState | null>(null);
+  if (editorStateRef.current === null) editorStateRef.current = new EditorState();
+  const editor = useEditorActions(getOfficeState, editorStateRef.current);
+  const { zoom, panRef } = editor;
+  const setZoom = editor.handleZoomChange;
 
   // Load assets and init Bridge connection
   useEffect(() => {
@@ -210,10 +220,13 @@ function App() {
         } else if (msg.type === 'furnitureAssetsLoaded') {
           buildDynamicCatalog({ catalog: msg.catalog, sprites: msg.sprites });
         } else if (msg.type === 'layoutLoaded') {
-          const rawLayout = msg.layout as OfficeLayout | null;
+          // Prefer a locally saved draft from previous editor session if available.
+          const draft = getDraftLayout() as OfficeLayout | null;
+          const rawLayout = (draft && draft.version === 1 ? draft : msg.layout) as OfficeLayout | null;
           const layout = rawLayout && rawLayout.version === 1 ? migrateLayoutColors(rawLayout) : null;
           if (layout) {
             os.rebuildFromLayout(layout);
+            editor.setLastSavedLayout(layout);
           }
           setLayoutReady(true);
         } else if (msg.type === 'agentCreated') {
@@ -305,9 +318,50 @@ function App() {
     // Future: center camera on agent, show details
   }, []);
 
-  const handleZoomChange = useCallback((newZoom: number) => {
-    setZoom(newZoom);
+  const handleDownloadLayout = useCallback(() => {
+    const layout = getOfficeState().getLayout();
+    const blob = new Blob([JSON.stringify(layout, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'office-layout.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   }, []);
+
+  const handleExpand = useCallback((direction: ExpandDirection) => {
+    const os = getOfficeState();
+    const result = expandLayout(os.getLayout(), direction);
+    if (!result) return;
+    os.rebuildFromLayout(result.layout);
+    if (editorStateRef.current) editorStateRef.current.isDirty = true;
+    // Persist via the same path as a tile edit so localStorage tracks the new size.
+    editor.handleEditorSelectionChange();
+    // Trigger a save by simulating a no-op edit through the hook's debounced path.
+    editor.handleSave();
+  }, [editor]);
+
+  const handleResetLayout = useCallback(() => {
+    if (!confirm('¿Descartar tus cambios y volver al layout original del repo?')) return;
+    clearDraftLayout();
+    location.reload();
+  }, []);
+
+  const editorBtnStyle: CSSProperties = {
+    background: '#1e1e3a',
+    border: '1px solid #2a2a4a',
+    color: '#e5e7eb',
+    fontSize: '12px',
+    width: '26px',
+    height: '26px',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  };
 
   if (!layoutReady) {
     return (
@@ -370,6 +424,36 @@ function App() {
           </span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          {/* Edit-mode toggle */}
+          <button
+            type="button"
+            onClick={editor.handleToggleEditMode}
+            title={editor.isEditMode ? 'Salir del modo edición' : 'Editar oficina'}
+            style={{
+              background: editor.isEditMode ? '#6366f1' : 'transparent',
+              border: '1px solid #1e1e3a',
+              color: editor.isEditMode ? '#fff' : '#9ca3af',
+              fontFamily: "'Inter', sans-serif",
+              fontSize: '11px',
+              padding: '4px 10px',
+              borderRadius: '6px',
+              cursor: 'pointer',
+            }}
+          >
+            ✏️ {editor.isEditMode ? 'Editando' : 'Editar'}
+          </button>
+          {editor.isEditMode && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <button type="button" onClick={() => handleExpand('up')} title="Expandir arriba" style={editorBtnStyle}>⬆</button>
+              <button type="button" onClick={() => handleExpand('down')} title="Expandir abajo" style={editorBtnStyle}>⬇</button>
+              <button type="button" onClick={() => handleExpand('left')} title="Expandir izquierda" style={editorBtnStyle}>⬅</button>
+              <button type="button" onClick={() => handleExpand('right')} title="Expandir derecha" style={editorBtnStyle}>➡</button>
+              <button type="button" onClick={editor.handleUndo} title="Deshacer" style={editorBtnStyle}>↶</button>
+              <button type="button" onClick={editor.handleRedo} title="Rehacer" style={editorBtnStyle}>↷</button>
+              <button type="button" onClick={handleResetLayout} title="Descartar cambios y recargar" style={editorBtnStyle}>⤴</button>
+              <button type="button" onClick={handleDownloadLayout} title="Descargar JSON del layout" style={{ ...editorBtnStyle, background: '#22c55e22', color: '#86efac' }}>💾</button>
+            </div>
+          )}
           {/* Agent status dots */}
           {visibleAgents.map((agent) => (
             <div key={agent.agentId} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -408,17 +492,17 @@ function App() {
           <OfficeCanvas
             officeState={getOfficeState()}
             onClick={handleClick}
-            isEditMode={false}
-            editorState={null as any}
-            onEditorTileAction={() => {}}
-            onEditorEraseAction={() => {}}
-            onEditorSelectionChange={() => {}}
-            onDeleteSelected={() => {}}
-            onRotateSelected={() => {}}
-            onDragMove={() => {}}
-            editorTick={0}
+            isEditMode={editor.isEditMode}
+            editorState={editorStateRef.current!}
+            onEditorTileAction={editor.handleEditorTileAction}
+            onEditorEraseAction={editor.handleEditorEraseAction}
+            onEditorSelectionChange={editor.handleEditorSelectionChange}
+            onDeleteSelected={editor.handleDeleteSelected}
+            onRotateSelected={editor.handleRotateSelected}
+            onDragMove={editor.handleDragMove}
+            editorTick={editor.editorTick}
             zoom={zoom}
-            onZoomChange={handleZoomChange}
+            onZoomChange={setZoom}
             panRef={panRef}
           />
           <ToolOverlay
@@ -434,7 +518,7 @@ function App() {
             agentNames={agentNamesById}
             agentSpeech={agentSpeech}
           />
-          <ZoomControls zoom={zoom} onZoomChange={handleZoomChange} />
+          <ZoomControls zoom={zoom} onZoomChange={setZoom} />
           {/* Vignette */}
           <div style={{
             position: 'absolute',
@@ -442,6 +526,39 @@ function App() {
             pointerEvents: 'none',
             background: 'radial-gradient(ellipse at center, transparent 60%, rgba(0,0,0,0.4) 100%)',
           }} />
+          {editor.isEditMode && (
+            <div style={{
+              position: 'absolute',
+              top: '12px',
+              left: '12px',
+              maxHeight: 'calc(100% - 24px)',
+              overflowY: 'auto',
+              background: 'rgba(15, 15, 26, 0.95)',
+              border: '1px solid #1e1e3a',
+              borderRadius: '8px',
+              padding: '12px',
+              zIndex: 100,
+              boxShadow: '0 4px 24px rgba(0,0,0,0.5)',
+            }}>
+              <EditorToolbar
+                activeTool={editorStateRef.current!.activeTool}
+                selectedTileType={editorStateRef.current!.selectedTileType}
+                selectedFurnitureType={editorStateRef.current!.selectedFurnitureType}
+                selectedFurnitureUid={editorStateRef.current!.selectedFurnitureUid}
+                selectedFurnitureColor={editorStateRef.current!.pickedFurnitureColor}
+                floorColor={editorStateRef.current!.floorColor}
+                wallColor={editorStateRef.current!.wallColor}
+                selectedWallSet={editorStateRef.current!.selectedWallSet}
+                onToolChange={editor.handleToolChange}
+                onTileTypeChange={editor.handleTileTypeChange}
+                onFloorColorChange={editor.handleFloorColorChange}
+                onWallColorChange={editor.handleWallColorChange}
+                onWallSetChange={editor.handleWallSetChange}
+                onSelectedFurnitureColorChange={editor.handleSelectedFurnitureColorChange}
+                onFurnitureTypeChange={editor.handleFurnitureTypeChange}
+              />
+            </div>
+          )}
         </div>
 
         {/* Message Log Panel */}
