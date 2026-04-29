@@ -626,6 +626,26 @@ function App() {
     location.reload();
   }, []);
 
+  // Group messages by sender agent for the sidebar. Each group's messages are
+  // sorted oldest-first; groups themselves are ordered by most recent activity
+  // (so the agent who just spoke floats to the top).
+  // NOTE: must live above the early returns below to keep hook order stable.
+  const messageGroups = useMemo(() => {
+    const byAgent = new Map<string, LogMessage[]>();
+    for (const m of messages) {
+      const list = byAgent.get(m.from) ?? [];
+      list.push(m);
+      byAgent.set(m.from, list);
+    }
+    const groups = Array.from(byAgent.entries()).map(([agentId, msgs]) => {
+      msgs.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+      const lastTs = msgs[msgs.length - 1]?.timestamp ?? '';
+      return { agentId, messages: msgs, lastTs };
+    });
+    groups.sort((a, b) => b.lastTs.localeCompare(a.lastTs));
+    return groups;
+  }, [messages]);
+
   const editorBtnStyle: CSSProperties = {
     background: '#1e1e3a',
     border: '1px solid #2a2a4a',
@@ -672,25 +692,6 @@ function App() {
   const agentNamesById: Record<number, string> = {};
   for (const a of agentEntries) agentNamesById[a.characterId] = a.displayName;
   const bridgeOnline = feedStatus === 'open';
-
-  // Group messages by sender agent for the sidebar. Each group's messages are
-  // sorted oldest-first; groups themselves are ordered by most recent activity
-  // (so the agent who just spoke floats to the top).
-  const messageGroups = useMemo(() => {
-    const byAgent = new Map<string, LogMessage[]>();
-    for (const m of messages) {
-      const list = byAgent.get(m.from) ?? [];
-      list.push(m);
-      byAgent.set(m.from, list);
-    }
-    const groups = Array.from(byAgent.entries()).map(([agentId, msgs]) => {
-      msgs.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-      const lastTs = msgs[msgs.length - 1]?.timestamp ?? '';
-      return { agentId, messages: msgs, lastTs };
-    });
-    groups.sort((a, b) => b.lastTs.localeCompare(a.lastTs));
-    return groups;
-  }, [messages]);
 
   return (
     <div style={{ width: '100vw', height: '100vh', display: 'flex', flexDirection: 'column', background: '#0a0a0f', overflow: 'hidden' }}>
