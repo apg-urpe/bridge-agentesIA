@@ -1,12 +1,6 @@
 # ── Stage 1: build pixel office (Vite + React) ─────────────────────────────
 FROM node:22-slim AS lab-builder
 WORKDIR /lab
-# Vite bakes VITE_* vars into the bundle at build time. Railway forwards
-# matching service variables as build args; declare them here so they reach Vite.
-ARG VITE_BRIDGE_API_KEY=""
-ARG VITE_BRIDGE_URL=""
-ENV VITE_BRIDGE_API_KEY=${VITE_BRIDGE_API_KEY}
-ENV VITE_BRIDGE_URL=${VITE_BRIDGE_URL}
 COPY lab/package.json lab/package-lock.json ./
 RUN npm ci
 COPY lab/ ./
