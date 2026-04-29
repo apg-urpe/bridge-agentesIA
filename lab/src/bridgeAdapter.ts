@@ -81,6 +81,14 @@ export function getCharacterId(agentId: string): number | null {
   return agentRegistry.get(agentId)?.characterId ?? null;
 }
 
+/** Take the part of the registered display_name before the first parenthesis,
+ * trimmed. "Rocky (OpenClaw/Claude)" → "Rocky". Names without "(" pass through. */
+function shortDisplayName(name: string): string {
+  const idx = name.indexOf('(');
+  const head = idx >= 0 ? name.slice(0, idx) : name;
+  return head.trim();
+}
+
 /** Resolve appearance with backend overrides falling through to a stable hash. */
 function deriveAppearance(ba: BridgeAgent): { palette: number; hueShift: number; color: string } {
   const palette = ba.palette ?? (stableHash(ba.agent_id) % PALETTE_COUNT);
@@ -111,29 +119,34 @@ async function refreshAgents(): Promise<AgentEntry[]> {
   let changed = false;
   for (const ba of bridgeAgents) {
     const { palette, hueShift, color } = deriveAppearance(ba);
+    const shortName = shortDisplayName(ba.display_name || '') || ba.agent_id;
     const existing = agentRegistry.get(ba.agent_id);
     if (existing) {
-      if (existing.palette !== palette || existing.hueShift !== hueShift) {
+      const nameChanged = existing.displayName !== shortName;
+      const appearanceChanged = existing.palette !== palette || existing.hueShift !== hueShift;
+      if (appearanceChanged || nameChanged) {
         existing.palette = palette;
         existing.hueShift = hueShift;
         existing.color = color;
-        existing.displayName = ba.display_name || ba.agent_id;
+        existing.displayName = shortName;
         existing.platform = ba.platform ?? null;
-        window.dispatchEvent(new MessageEvent('message', {
-          data: {
-            type: 'agentAppearanceChanged',
-            id: existing.characterId,
-            palette,
-            hueShift,
-          },
-        }));
+        if (appearanceChanged) {
+          window.dispatchEvent(new MessageEvent('message', {
+            data: {
+              type: 'agentAppearanceChanged',
+              id: existing.characterId,
+              palette,
+              hueShift,
+            },
+          }));
+        }
         changed = true;
       }
       continue;
     }
     const entry: AgentEntry = {
       agentId: ba.agent_id,
-      displayName: ba.display_name || ba.agent_id,
+      displayName: shortName,
       platform: ba.platform ?? null,
       characterId: nextId++,
       palette,
