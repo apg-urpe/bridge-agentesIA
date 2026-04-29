@@ -710,37 +710,23 @@ function App() {
             background: 'radial-gradient(ellipse at center, transparent 60%, rgba(0,0,0,0.4) 100%)',
           }} />
           {editor.isEditMode && (
-            <div style={{
-              position: 'absolute',
-              top: '12px',
-              left: '12px',
-              maxHeight: 'calc(100% - 24px)',
-              overflowY: 'auto',
-              background: 'rgba(15, 15, 26, 0.95)',
-              border: '1px solid #1e1e3a',
-              borderRadius: '8px',
-              padding: '12px',
-              zIndex: 100,
-              boxShadow: '0 4px 24px rgba(0,0,0,0.5)',
-            }}>
-              <EditorToolbar
-                activeTool={editorStateRef.current!.activeTool}
-                selectedTileType={editorStateRef.current!.selectedTileType}
-                selectedFurnitureType={editorStateRef.current!.selectedFurnitureType}
-                selectedFurnitureUid={editorStateRef.current!.selectedFurnitureUid}
-                selectedFurnitureColor={editorStateRef.current!.pickedFurnitureColor}
-                floorColor={editorStateRef.current!.floorColor}
-                wallColor={editorStateRef.current!.wallColor}
-                selectedWallSet={editorStateRef.current!.selectedWallSet}
-                onToolChange={editor.handleToolChange}
-                onTileTypeChange={editor.handleTileTypeChange}
-                onFloorColorChange={editor.handleFloorColorChange}
-                onWallColorChange={editor.handleWallColorChange}
-                onWallSetChange={editor.handleWallSetChange}
-                onSelectedFurnitureColorChange={editor.handleSelectedFurnitureColorChange}
-                onFurnitureTypeChange={editor.handleFurnitureTypeChange}
-              />
-            </div>
+            <EditorToolbar
+              activeTool={editorStateRef.current!.activeTool}
+              selectedTileType={editorStateRef.current!.selectedTileType}
+              selectedFurnitureType={editorStateRef.current!.selectedFurnitureType}
+              selectedFurnitureUid={editorStateRef.current!.selectedFurnitureUid}
+              selectedFurnitureColor={editorStateRef.current!.pickedFurnitureColor}
+              floorColor={editorStateRef.current!.floorColor}
+              wallColor={editorStateRef.current!.wallColor}
+              selectedWallSet={editorStateRef.current!.selectedWallSet}
+              onToolChange={editor.handleToolChange}
+              onTileTypeChange={editor.handleTileTypeChange}
+              onFloorColorChange={editor.handleFloorColorChange}
+              onWallColorChange={editor.handleWallColorChange}
+              onWallSetChange={editor.handleWallSetChange}
+              onSelectedFurnitureColorChange={editor.handleSelectedFurnitureColorChange}
+              onFurnitureTypeChange={editor.handleFurnitureTypeChange}
+            />
           )}
         </div>
 
