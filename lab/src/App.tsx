@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { CSSProperties } from 'react';
+import type { CSSProperties, FormEvent } from 'react';
 
 import {
   loadAssets,
@@ -16,6 +16,13 @@ import {
   type AgentEntry,
   type LiveMessage,
 } from './bridgeAdapter.ts';
+import {
+  clearStoredGateToken,
+  fetchGateStatus,
+  getStoredGateToken,
+  setStoredGateToken,
+  verifyGateToken,
+} from './bridgeClient.ts';
 import { OfficeCanvas } from './office/components/OfficeCanvas.js';
 import { ToolOverlay } from './office/components/ToolOverlay.js';
 import { EditorState, EditorToolbar } from './office/editor/index.js';
@@ -179,6 +186,147 @@ interface LogMessage {
   timestamp: string;
 }
 
+// ── Gate screen ────────────────────────────────────────────────────────────
+
+type GatePhase = 'checking' | 'required' | 'passed';
+
+interface GateScreenProps {
+  phase: GatePhase;
+  onPassed: () => void;
+}
+
+function GateScreen({ phase, onPassed }: GateScreenProps) {
+  const [token, setToken] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    const trimmed = token.trim();
+    if (!trimmed) {
+      setError('Pegá el access token.');
+      return;
+    }
+    setError(null);
+    setSubmitting(true);
+    try {
+      await verifyGateToken(trimmed);
+      setStoredGateToken(trimmed);
+      setToken('');
+      onPassed();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Token inválido');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  const wrapper: CSSProperties = {
+    width: '100vw',
+    height: '100vh',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: '#0a0a0f',
+    fontFamily: "'Inter', sans-serif",
+    color: '#e5e7eb',
+  };
+
+  if (phase === 'checking') {
+    return (
+      <div style={{ ...wrapper, color: '#6366f1', fontFamily: "'Press Start 2P', monospace", fontSize: '14px' }}>
+        Verificando acceso…
+      </div>
+    );
+  }
+
+  return (
+    <div style={wrapper}>
+      <form onSubmit={handleSubmit} style={{
+        background: '#0f0f1a',
+        border: '1px solid #1e1e3a',
+        borderRadius: '10px',
+        padding: '28px 28px 24px',
+        width: '100%',
+        maxWidth: '380px',
+        boxShadow: '0 4px 24px rgba(0,0,0,0.5)',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
+          <span style={{ fontSize: '18px' }}>🔒</span>
+          <h2 style={{
+            margin: 0,
+            fontSize: '15px',
+            fontWeight: 700,
+            background: 'linear-gradient(135deg, #6366f1, #a855f7)',
+            WebkitBackgroundClip: 'text',
+            WebkitTextFillColor: 'transparent',
+            letterSpacing: '0.5px',
+          }}>
+            Acceso restringido
+          </h2>
+        </div>
+        <p style={{ color: '#8b949e', fontSize: '12px', margin: '0 0 16px' }}>
+          Esta plataforma requiere un token de acceso. Pedíselo al administrador.
+        </p>
+        {error && (
+          <div style={{
+            background: '#3a0f17',
+            border: '1px solid #7f1d1d',
+            color: '#fecaca',
+            padding: '8px 10px',
+            borderRadius: '6px',
+            fontSize: '12px',
+            marginBottom: '12px',
+          }}>
+            {error}
+          </div>
+        )}
+        <label style={{ fontSize: '11px', color: '#9ca3af', display: 'block', marginBottom: '6px' }}>
+          Access token
+        </label>
+        <input
+          type="password"
+          value={token}
+          onChange={(e) => setToken(e.target.value)}
+          placeholder="paste your access token"
+          autoComplete="off"
+          autoFocus
+          style={{
+            width: '100%',
+            background: '#0a0a0f',
+            border: '1px solid #1e1e3a',
+            borderRadius: '6px',
+            padding: '10px 12px',
+            color: '#e5e7eb',
+            fontSize: '13px',
+            fontFamily: 'inherit',
+            boxSizing: 'border-box',
+            marginBottom: '14px',
+          }}
+        />
+        <button
+          type="submit"
+          disabled={submitting}
+          style={{
+            width: '100%',
+            background: submitting ? '#3730a3' : 'linear-gradient(135deg, #6366f1, #a855f7)',
+            border: 'none',
+            color: '#fff',
+            padding: '10px 14px',
+            borderRadius: '6px',
+            fontSize: '13px',
+            fontWeight: 600,
+            cursor: submitting ? 'wait' : 'pointer',
+            fontFamily: 'inherit',
+          }}
+        >
+          {submitting ? 'Verificando…' : 'Entrar'}
+        </button>
+      </form>
+    </div>
+  );
+}
+
 // ── App ────────────────────────────────────────────────────────────────────
 
 function App() {
@@ -189,6 +337,7 @@ function App() {
   const containerRef = useRef<HTMLDivElement>(null);
   const logRef = useRef<HTMLDivElement>(null);
   const [feedStatus, setFeedStatus] = useState<'connecting' | 'open' | 'closed'>('connecting');
+  const [gatePhase, setGatePhase] = useState<GatePhase>('checking');
 
   // Editor (visual layout designer). isEditMode toggles via header button.
   const editorStateRef = useRef<EditorState | null>(null);
@@ -197,8 +346,33 @@ function App() {
   const { zoom, panRef } = editor;
   const setZoom = editor.handleZoomChange;
 
-  // Load assets and init Bridge connection
+  // Gate check: mirrors the original /v1/dashboard flow. If the bridge has
+  // REGISTRATION_TOKEN set, ask for the access token *before* connecting to
+  // /v1/office/feed so the user never sees a 401 mid-load.
   useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const status = await fetchGateStatus();
+      if (cancelled) return;
+      if (!status.required) { setGatePhase('passed'); return; }
+      const stored = getStoredGateToken();
+      if (stored) {
+        try {
+          await verifyGateToken(stored);
+          if (!cancelled) setGatePhase('passed');
+          return;
+        } catch {
+          clearStoredGateToken();
+        }
+      }
+      if (!cancelled) setGatePhase('required');
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Load assets and init Bridge connection (gated: only runs once gatePhase==='passed')
+  useEffect(() => {
+    if (gatePhase !== 'passed') return;
     let cancelled = false;
 
     async function init() {
@@ -260,7 +434,7 @@ function App() {
 
     init();
     return () => { cancelled = true; stopFeed(); };
-  }, []);
+  }, [gatePhase]);
 
   // Track agent registry changes (header dots, log labels)
   useEffect(() => {
@@ -362,6 +536,15 @@ function App() {
     alignItems: 'center',
     justifyContent: 'center',
   };
+
+  if (gatePhase !== 'passed') {
+    return (
+      <GateScreen
+        phase={gatePhase}
+        onPassed={() => setGatePhase('passed')}
+      />
+    );
+  }
 
   if (!layoutReady) {
     return (

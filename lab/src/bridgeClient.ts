@@ -11,7 +11,7 @@
  * `bridge-agentesia-gate-token` localStorage key (same origin → shared).
  */
 
-const GATE_STORAGE_KEY = 'bridge-agentesia-gate-token';
+export const GATE_STORAGE_KEY = 'bridge-agentesia-gate-token';
 
 function resolveBridgeUrl(): string {
   const envUrl = import.meta.env.VITE_BRIDGE_URL;
@@ -31,6 +31,53 @@ function resolveGateToken(): string {
 }
 
 const BRIDGE_URL = resolveBridgeUrl();
+
+export function getStoredGateToken(): string {
+  if (typeof localStorage === 'undefined') return '';
+  return localStorage.getItem(GATE_STORAGE_KEY) || '';
+}
+
+export function setStoredGateToken(token: string): void {
+  if (typeof localStorage === 'undefined') return;
+  localStorage.setItem(GATE_STORAGE_KEY, token);
+}
+
+export function clearStoredGateToken(): void {
+  if (typeof localStorage === 'undefined') return;
+  localStorage.removeItem(GATE_STORAGE_KEY);
+}
+
+/** GET /v1/gate/status — does the bridge require an access token? */
+export async function fetchGateStatus(): Promise<{ required: boolean }> {
+  try {
+    const res = await fetch(`${BRIDGE_URL}/v1/gate/status`, { cache: 'no-store' });
+    if (!res.ok) return { required: false };
+    const data = await res.json();
+    return { required: !!data.required };
+  } catch {
+    return { required: false };
+  }
+}
+
+/** POST /v1/gate/check — validate a candidate token. Throws on failure. */
+export async function verifyGateToken(token: string): Promise<void> {
+  const res = await fetch(`${BRIDGE_URL}/v1/gate/check`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { 'X-Registration-Token': token } : {}),
+    },
+    cache: 'no-store',
+  });
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`;
+    try {
+      const body = await res.json();
+      if (body && typeof body.detail === 'string') detail = body.detail;
+    } catch { /* ignore */ }
+    throw new Error(detail);
+  }
+}
 
 export interface BridgeAgent {
   agent_id: string;
