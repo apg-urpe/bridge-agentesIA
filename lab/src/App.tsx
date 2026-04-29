@@ -222,75 +222,124 @@ function GateScreen({ phase, onPassed }: GateScreenProps) {
     }
   }
 
-  // Visual parity with the original dashboard gate (`/`): same monospace,
-  // GitHub-dark palette, uppercase label, blue primary button.
+  // Pixel/Minecraft-inspired gate: full-screen centered, dark gradient sky,
+  // chunky retro fonts (Press Start 2P for the title, Pixelify Sans for body),
+  // animated glow on the card and the button.
+  const PIXEL_TITLE = "'Press Start 2P', 'Pixelify Sans', monospace";
+  const PIXEL_BODY = "'Pixelify Sans', 'Press Start 2P', monospace";
+
   const wrapper: CSSProperties = {
     width: '100vw',
     minHeight: '100vh',
-    background: '#0d1117',
-    color: '#c9d1d9',
-    fontFamily: 'monospace',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background:
+      'radial-gradient(ellipse at top, #1a1a3a 0%, #0a0a18 50%, #050510 100%)',
+    color: '#e2e8f0',
+    fontFamily: PIXEL_BODY,
     padding: '2rem',
     boxSizing: 'border-box',
   };
-  const inner: CSSProperties = {
-    maxWidth: '1100px',
-    margin: '0 auto',
-  };
+
   const card: CSSProperties = {
-    background: '#161b22',
-    border: '1px solid #30363d',
-    borderRadius: '8px',
-    padding: '1.25rem',
-    maxWidth: '640px',
+    width: '100%',
+    maxWidth: '480px',
+    background: 'linear-gradient(180deg, #14142e 0%, #0e0e22 100%)',
+    border: '2px solid #6366f1',
+    borderRadius: '4px',
+    padding: '2.5rem 2rem 2rem',
+    boxShadow:
+      '0 0 0 4px #0a0a18, 0 0 32px rgba(99, 102, 241, 0.4), inset 0 0 24px rgba(99, 102, 241, 0.08)',
+    textAlign: 'center',
   };
-  const heading: CSSProperties = {
-    color: '#e6edf3',
+
+  const titleStyle: CSSProperties = {
+    fontFamily: PIXEL_TITLE,
+    fontSize: '1.4rem',
+    color: '#a5b4fc',
+    margin: '0 0 0.4rem',
+    letterSpacing: '1px',
+    textShadow:
+      '0 0 8px rgba(99, 102, 241, 0.7), 2px 2px 0 #0a0a18, 4px 4px 0 rgba(99, 102, 241, 0.2)',
+    lineHeight: 1.3,
+  };
+
+  const subtitleStyle: CSSProperties = {
+    fontFamily: PIXEL_BODY,
     fontSize: '1rem',
-    margin: '0 0 0.8rem',
-    textTransform: 'uppercase',
-    letterSpacing: '0.05em',
-    borderBottom: '1px solid #21262d',
-    paddingBottom: '0.4rem',
-    fontWeight: 600,
+    color: '#94a3b8',
+    margin: '0 0 1.75rem',
+    letterSpacing: '0.5px',
   };
+
+  const sectionTitleStyle: CSSProperties = {
+    fontFamily: PIXEL_TITLE,
+    fontSize: '0.7rem',
+    color: '#fbbf24',
+    margin: '0 0 0.75rem',
+    letterSpacing: '1px',
+    textShadow: '0 0 6px rgba(251, 191, 36, 0.5), 2px 2px 0 #0a0a18',
+  };
+
+  const sectionDescStyle: CSSProperties = {
+    fontFamily: PIXEL_BODY,
+    fontSize: '0.95rem',
+    color: '#cbd5e1',
+    margin: '0 0 1.5rem',
+    lineHeight: 1.5,
+  };
+
   const labelStyle: CSSProperties = {
     display: 'block',
-    fontSize: '0.75rem',
-    color: '#8b949e',
-    marginBottom: '0.3rem',
-    textTransform: 'uppercase',
-    letterSpacing: '0.05em',
+    fontFamily: PIXEL_TITLE,
+    fontSize: '0.55rem',
+    color: '#a5b4fc',
+    marginBottom: '0.5rem',
+    letterSpacing: '1.5px',
+    textAlign: 'left',
   };
+
   const inputStyle: CSSProperties = {
-    fontFamily: 'monospace',
-    background: '#0d1117',
-    color: '#c9d1d9',
-    border: '1px solid #30363d',
-    borderRadius: '6px',
-    padding: '0.5rem 0.75rem',
-    fontSize: '0.85rem',
+    fontFamily: PIXEL_BODY,
+    fontSize: '1.05rem',
+    background: '#06061a',
+    color: '#e2e8f0',
+    border: '2px solid #2d2d5a',
+    borderRadius: '4px',
+    padding: '0.75rem 0.9rem',
     width: '100%',
     boxSizing: 'border-box',
+    outline: 'none',
+    letterSpacing: '0.5px',
+    boxShadow: 'inset 0 0 8px rgba(0, 0, 0, 0.5)',
   };
+
   const buttonStyle: CSSProperties = {
-    fontFamily: 'monospace',
-    background: submitting ? '#1747a8' : '#1f6feb',
+    fontFamily: PIXEL_TITLE,
+    fontSize: '0.7rem',
+    background: submitting
+      ? 'linear-gradient(180deg, #4338ca, #3730a3)'
+      : 'linear-gradient(180deg, #6366f1, #4f46e5)',
     color: '#fff',
-    border: '1px solid #1f6feb',
-    borderRadius: '6px',
-    padding: '0.5rem 1rem',
-    fontSize: '0.85rem',
+    border: '2px solid #818cf8',
+    borderRadius: '4px',
+    padding: '0.85rem 1.5rem',
+    width: '100%',
     cursor: submitting ? 'wait' : 'pointer',
+    letterSpacing: '2px',
+    textShadow: '2px 2px 0 #1e1b4b',
+    boxShadow:
+      '0 4px 0 #312e81, 0 0 16px rgba(99, 102, 241, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.1)',
+    transition: 'transform 0.05s, box-shadow 0.05s',
   };
 
   if (phase === 'checking') {
     return (
       <div style={wrapper}>
-        <div style={inner}>
-          <h1 style={{ fontSize: '1.5rem', color: '#58a6ff', margin: '0 0 0.5rem' }}>bridge-agentesIA</h1>
-          <p style={{ color: '#8b949e', margin: '0 0 1.5rem' }}>Cola de mensajes inter-agente</p>
-          <div style={card}>Verificando acceso…</div>
+        <div style={card}>
+          <h1 style={titleStyle}>bridge-agentesIA</h1>
+          <p style={subtitleStyle}>Verificando acceso…</p>
         </div>
       </div>
     );
@@ -298,44 +347,67 @@ function GateScreen({ phase, onPassed }: GateScreenProps) {
 
   return (
     <div style={wrapper}>
-      <div style={inner}>
-        <h1 style={{ fontSize: '1.5rem', color: '#58a6ff', margin: '0 0 0.5rem' }}>bridge-agentesIA</h1>
-        <p style={{ color: '#8b949e', margin: '0 0 1.5rem' }}>Cola de mensajes inter-agente</p>
-        <form onSubmit={handleSubmit} style={card}>
-          <h2 style={heading}>Acceso restringido</h2>
-          <p style={{ color: '#8b949e', fontSize: '0.85rem', marginBottom: '1rem' }}>
-            Esta plataforma requiere un token de acceso. Pedíselo al administrador.
-          </p>
-          {error && (
-            <div style={{
-              background: '#3a0f17',
-              border: '1px solid #7f1d1d',
-              color: '#fecaca',
-              padding: '0.5rem 0.75rem',
-              borderRadius: '6px',
-              fontSize: '0.85rem',
-              marginBottom: '0.75rem',
-            }}>
-              {error}
-            </div>
-          )}
-          <div style={{ marginBottom: '1rem' }}>
-            <label style={labelStyle}>Access token</label>
-            <input
-              type="password"
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-              placeholder="paste your access token"
-              autoComplete="off"
-              autoFocus
-              style={inputStyle}
-            />
+      <form onSubmit={handleSubmit} style={card}>
+        <h1 style={titleStyle}>bridge-agentesIA</h1>
+        <p style={subtitleStyle}>Cola de mensajes inter-agente</p>
+
+        <h2 style={sectionTitleStyle}>◆ Acceso restringido ◆</h2>
+        <p style={sectionDescStyle}>
+          Esta plataforma requiere un token de acceso.<br />
+          Pedíselo al administrador.
+        </p>
+
+        {error && (
+          <div style={{
+            fontFamily: PIXEL_BODY,
+            background: '#3a0f17',
+            border: '2px solid #ef4444',
+            color: '#fecaca',
+            padding: '0.6rem 0.8rem',
+            borderRadius: '4px',
+            fontSize: '0.95rem',
+            marginBottom: '1rem',
+            textAlign: 'left',
+          }}>
+            ⚠ {error}
           </div>
-          <button type="submit" disabled={submitting} style={buttonStyle}>
-            {submitting ? 'Verificando…' : 'Entrar'}
-          </button>
-        </form>
-      </div>
+        )}
+
+        <div style={{ marginBottom: '1.5rem' }}>
+          <label style={labelStyle}>Access token</label>
+          <input
+            type="password"
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            placeholder="paste your access token"
+            autoComplete="off"
+            autoFocus
+            style={inputStyle}
+          />
+        </div>
+
+        <button
+          type="submit"
+          disabled={submitting}
+          style={buttonStyle}
+          onMouseDown={(e) => {
+            if (submitting) return;
+            e.currentTarget.style.transform = 'translateY(2px)';
+            e.currentTarget.style.boxShadow =
+              '0 2px 0 #312e81, 0 0 16px rgba(99, 102, 241, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.1)';
+          }}
+          onMouseUp={(e) => {
+            e.currentTarget.style.transform = '';
+            e.currentTarget.style.boxShadow = buttonStyle.boxShadow as string;
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.transform = '';
+            e.currentTarget.style.boxShadow = buttonStyle.boxShadow as string;
+          }}
+        >
+          {submitting ? 'Verificando…' : '▶ Entrar'}
+        </button>
+      </form>
     </div>
   );
 }
