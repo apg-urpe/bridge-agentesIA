@@ -638,6 +638,14 @@ function App() {
     location.reload();
   }, []);
 
+  // Set of currently-registered agent ids — used to filter out orphan senders
+  // (revoked agents, old test data) so the sidebar only shows agents that are
+  // also present on the office canvas.
+  const knownAgentIds = useMemo(
+    () => new Set(agentEntries.map((a) => a.agentId)),
+    [agentEntries],
+  );
+
   // Group messages by sender agent for the sidebar. Each group's messages are
   // sorted oldest-first; groups themselves are ordered by most recent activity
   // (so the agent who just spoke floats to the top).
@@ -645,6 +653,7 @@ function App() {
   const messageGroups = useMemo(() => {
     const byAgent = new Map<string, LogMessage[]>();
     for (const m of messages) {
+      if (!knownAgentIds.has(m.from)) continue;
       const list = byAgent.get(m.from) ?? [];
       list.push(m);
       byAgent.set(m.from, list);
@@ -656,7 +665,7 @@ function App() {
     });
     groups.sort((a, b) => b.lastTs.localeCompare(a.lastTs));
     return groups;
-  }, [messages]);
+  }, [messages, knownAgentIds]);
 
   const editorBtnStyle: CSSProperties = {
     background: '#1e1e3a',
@@ -896,7 +905,7 @@ function App() {
               marginLeft: 'auto',
               fontFamily: "'Inter', sans-serif",
             }}>
-              {messages.length}
+              {messageGroups.reduce((acc, g) => acc + g.messages.length, 0)}
             </span>
           </div>
 
