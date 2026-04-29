@@ -659,8 +659,10 @@ function App() {
       byAgent.set(m.from, list);
     }
     const groups = Array.from(byAgent.entries()).map(([agentId, msgs]) => {
-      msgs.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-      const lastTs = msgs[msgs.length - 1]?.timestamp ?? '';
+      // Newest first inside each group so the latest message sits at the top
+      // when expanded (matches the parent ordering, no scroll needed to read).
+      msgs.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
+      const lastTs = msgs[0]?.timestamp ?? '';
       return { agentId, messages: msgs, lastTs };
     });
     groups.sort((a, b) => b.lastTs.localeCompare(a.lastTs));
