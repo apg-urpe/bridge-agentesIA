@@ -221,108 +221,120 @@ function GateScreen({ phase, onPassed }: GateScreenProps) {
     }
   }
 
+  // Visual parity with the original dashboard gate (`/`): same monospace,
+  // GitHub-dark palette, uppercase label, blue primary button.
   const wrapper: CSSProperties = {
     width: '100vw',
-    height: '100vh',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    background: '#0a0a0f',
-    fontFamily: "'Inter', sans-serif",
-    color: '#e5e7eb',
+    minHeight: '100vh',
+    background: '#0d1117',
+    color: '#c9d1d9',
+    fontFamily: 'monospace',
+    padding: '2rem',
+    boxSizing: 'border-box',
+  };
+  const inner: CSSProperties = {
+    maxWidth: '1100px',
+    margin: '0 auto',
+  };
+  const card: CSSProperties = {
+    background: '#161b22',
+    border: '1px solid #30363d',
+    borderRadius: '8px',
+    padding: '1.25rem',
+    maxWidth: '640px',
+  };
+  const heading: CSSProperties = {
+    color: '#e6edf3',
+    fontSize: '1rem',
+    margin: '0 0 0.8rem',
+    textTransform: 'uppercase',
+    letterSpacing: '0.05em',
+    borderBottom: '1px solid #21262d',
+    paddingBottom: '0.4rem',
+    fontWeight: 600,
+  };
+  const labelStyle: CSSProperties = {
+    display: 'block',
+    fontSize: '0.75rem',
+    color: '#8b949e',
+    marginBottom: '0.3rem',
+    textTransform: 'uppercase',
+    letterSpacing: '0.05em',
+  };
+  const inputStyle: CSSProperties = {
+    fontFamily: 'monospace',
+    background: '#0d1117',
+    color: '#c9d1d9',
+    border: '1px solid #30363d',
+    borderRadius: '6px',
+    padding: '0.5rem 0.75rem',
+    fontSize: '0.85rem',
+    width: '100%',
+    boxSizing: 'border-box',
+  };
+  const buttonStyle: CSSProperties = {
+    fontFamily: 'monospace',
+    background: submitting ? '#1747a8' : '#1f6feb',
+    color: '#fff',
+    border: '1px solid #1f6feb',
+    borderRadius: '6px',
+    padding: '0.5rem 1rem',
+    fontSize: '0.85rem',
+    cursor: submitting ? 'wait' : 'pointer',
   };
 
   if (phase === 'checking') {
     return (
-      <div style={{ ...wrapper, color: '#6366f1', fontFamily: "'Press Start 2P', monospace", fontSize: '14px' }}>
-        Verificando acceso…
+      <div style={wrapper}>
+        <div style={inner}>
+          <h1 style={{ fontSize: '1.5rem', color: '#58a6ff', margin: '0 0 0.5rem' }}>bridge-agentesIA</h1>
+          <p style={{ color: '#8b949e', margin: '0 0 1.5rem' }}>Cola de mensajes inter-agente</p>
+          <div style={card}>Verificando acceso…</div>
+        </div>
       </div>
     );
   }
 
   return (
     <div style={wrapper}>
-      <form onSubmit={handleSubmit} style={{
-        background: '#0f0f1a',
-        border: '1px solid #1e1e3a',
-        borderRadius: '10px',
-        padding: '28px 28px 24px',
-        width: '100%',
-        maxWidth: '380px',
-        boxShadow: '0 4px 24px rgba(0,0,0,0.5)',
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
-          <span style={{ fontSize: '18px' }}>🔒</span>
-          <h2 style={{
-            margin: 0,
-            fontSize: '15px',
-            fontWeight: 700,
-            background: 'linear-gradient(135deg, #6366f1, #a855f7)',
-            WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent',
-            letterSpacing: '0.5px',
-          }}>
-            Acceso restringido
-          </h2>
-        </div>
-        <p style={{ color: '#8b949e', fontSize: '12px', margin: '0 0 16px' }}>
-          Esta plataforma requiere un token de acceso. Pedíselo al administrador.
-        </p>
-        {error && (
-          <div style={{
-            background: '#3a0f17',
-            border: '1px solid #7f1d1d',
-            color: '#fecaca',
-            padding: '8px 10px',
-            borderRadius: '6px',
-            fontSize: '12px',
-            marginBottom: '12px',
-          }}>
-            {error}
+      <div style={inner}>
+        <h1 style={{ fontSize: '1.5rem', color: '#58a6ff', margin: '0 0 0.5rem' }}>bridge-agentesIA</h1>
+        <p style={{ color: '#8b949e', margin: '0 0 1.5rem' }}>Cola de mensajes inter-agente</p>
+        <form onSubmit={handleSubmit} style={card}>
+          <h2 style={heading}>Acceso restringido</h2>
+          <p style={{ color: '#8b949e', fontSize: '0.85rem', marginBottom: '1rem' }}>
+            Esta plataforma requiere un token de acceso. Pedíselo al administrador.
+          </p>
+          {error && (
+            <div style={{
+              background: '#3a0f17',
+              border: '1px solid #7f1d1d',
+              color: '#fecaca',
+              padding: '0.5rem 0.75rem',
+              borderRadius: '6px',
+              fontSize: '0.85rem',
+              marginBottom: '0.75rem',
+            }}>
+              {error}
+            </div>
+          )}
+          <div style={{ marginBottom: '1rem' }}>
+            <label style={labelStyle}>Access token</label>
+            <input
+              type="password"
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              placeholder="paste your access token"
+              autoComplete="off"
+              autoFocus
+              style={inputStyle}
+            />
           </div>
-        )}
-        <label style={{ fontSize: '11px', color: '#9ca3af', display: 'block', marginBottom: '6px' }}>
-          Access token
-        </label>
-        <input
-          type="password"
-          value={token}
-          onChange={(e) => setToken(e.target.value)}
-          placeholder="paste your access token"
-          autoComplete="off"
-          autoFocus
-          style={{
-            width: '100%',
-            background: '#0a0a0f',
-            border: '1px solid #1e1e3a',
-            borderRadius: '6px',
-            padding: '10px 12px',
-            color: '#e5e7eb',
-            fontSize: '13px',
-            fontFamily: 'inherit',
-            boxSizing: 'border-box',
-            marginBottom: '14px',
-          }}
-        />
-        <button
-          type="submit"
-          disabled={submitting}
-          style={{
-            width: '100%',
-            background: submitting ? '#3730a3' : 'linear-gradient(135deg, #6366f1, #a855f7)',
-            border: 'none',
-            color: '#fff',
-            padding: '10px 14px',
-            borderRadius: '6px',
-            fontSize: '13px',
-            fontWeight: 600,
-            cursor: submitting ? 'wait' : 'pointer',
-            fontFamily: 'inherit',
-          }}
-        >
-          {submitting ? 'Verificando…' : 'Entrar'}
-        </button>
-      </form>
+          <button type="submit" disabled={submitting} style={buttonStyle}>
+            {submitting ? 'Verificando…' : 'Entrar'}
+          </button>
+        </form>
+      </div>
     </div>
   );
 }
