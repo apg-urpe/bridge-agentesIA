@@ -6,3 +6,7 @@ __pycache__/
 .venv/
 .pytest_cache/
 scripts/.test-keys.json
+lab/node_modules/
+lab/dist/
+lab/.env
+lab/.env.local

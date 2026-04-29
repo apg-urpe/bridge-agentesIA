@@ -15,3 +15,9 @@ tests/
 scripts/
 requirements-dev.txt
 README.md
+
+# lab build artifacts and deps (rebuilt in Dockerfile stage 1)
+lab/node_modules/
+lab/dist/
+lab/.env
+lab/.env.local

@@ -13,6 +13,7 @@ from typing import Optional
 from fastapi import FastAPI, Depends, HTTPException, Query, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, PlainTextResponse, FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 import aiosqlite
 from dotenv import load_dotenv
 
@@ -661,7 +662,7 @@ document.getElementById('gate-btn').addEventListener('click', async () => {
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _GUIDE_HTML_PATH = _REPO_ROOT / "guide.html"
 _GUIDE_MD_PATH = _REPO_ROOT / "AGENT_INTEGRATION.md"
-_OFFICE_HTML_PATH = _REPO_ROOT / "office.html"
+_LAB_DIST_PATH = _REPO_ROOT / "lab-dist"
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -685,13 +686,6 @@ async def agent_guide(request: Request):
     text = _GUIDE_MD_PATH.read_text(encoding="utf-8")
     text = text.replace("{{BRIDGE_URL}}", _resolve_bridge_url(request))
     return PlainTextResponse(text, media_type="text/markdown; charset=utf-8")
-
-
-@app.get("/office", response_class=HTMLResponse)
-async def office_page():
-    if not _OFFICE_HTML_PATH.exists():
-        raise HTTPException(status_code=404, detail="office.html not found")
-    return HTMLResponse(_OFFICE_HTML_PATH.read_text(encoding="utf-8"))
 
 
 @app.get("/v1/office/feed")
@@ -1040,3 +1034,10 @@ async def ack_message(
     await db.execute("UPDATE messages SET read=1 WHERE id=?", (message_id,))
     await db.commit()
     return AckResponse(status="acknowledged")
+
+
+# ── Pixel office (URPE AI Lab) ────────────────────────────────────────────
+# Built by Vite into lab-dist/ during the Docker build (see Dockerfile stage 1).
+# Mounted last so /v1/office/feed and other routes win over the static prefix.
+if _LAB_DIST_PATH.exists():
+    app.mount("/office", StaticFiles(directory=_LAB_DIST_PATH, html=True), name="office")

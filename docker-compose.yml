@@ -9,9 +9,10 @@ services:
       # Live-mount source files so edits reflect without rebuilding the image.
       - ./app:/app/app:ro
       - ./tests:/app/tests:ro
-      - ./office.html:/app/office.html:ro
       - ./guide.html:/app/guide.html:ro
       - ./AGENT_INTEGRATION.md:/app/AGENT_INTEGRATION.md:ro
+      # Pixel office (built static bundle). Run `npm --prefix lab run build` to refresh.
+      - ./lab/dist:/app/lab-dist:ro
     restart: unless-stopped
 
 volumes:

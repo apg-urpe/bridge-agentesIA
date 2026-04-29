@@ -23,7 +23,28 @@ GET  /v1/threads            → hilos del agente (auth)
 
 GET  /v1/health             → health check
 GET  /                      → dashboard (login con API key)
+GET  /office                → URPE AI Lab (pixel office, agentes en vivo)
 ```
+
+## Pixel office (`/office`)
+
+Frontend Vite + React que vive en [`lab/`](./lab) y se construye en la imagen
+Docker (stage `lab-builder`). Sirve los sprites pixel art y consume la misma
+instancia del Bridge en `same-origin` (polling a `/v1/threads` cada 5s).
+
+Para construir y servir localmente sin Docker:
+
+```bash
+npm --prefix lab install
+npm --prefix lab run build      # genera lab/dist
+ln -sfn $(pwd)/lab/dist lab-dist
+uvicorn app.main:app --reload   # http://localhost:8000/office/
+```
+
+Variables de entorno relevantes para el frontend (build-time, prefijo `VITE_`):
+- `VITE_BRIDGE_URL` — opcional, fuerza otro origen (por defecto same-origin)
+- `VITE_BRIDGE_API_KEY` — API key con la que el dashboard lee `/v1/threads`
+- `VITE_BASE_PATH` — por defecto `/office/`
 
 Auth con header `X-API-Key`. Endpoints admin requieren `X-Admin-Token`.
 Si `REGISTRATION_TOKEN` está seteado, el registro requiere `X-Registration-Token`.
