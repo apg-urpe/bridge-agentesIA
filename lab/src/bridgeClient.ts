@@ -108,6 +108,32 @@ export interface OfficeFeedHello {
 
 export type OfficeFeedEvent = OfficeFeedMessage | OfficeFeedHello;
 
+/** Last N messages persisted in the bridge DB, oldest first. Gate-token
+ * protected (same contract as /v1/office/feed). */
+export async function fetchOfficeHistory(limit = 200): Promise<OfficeFeedMessage[]> {
+  const token = resolveGateToken();
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (token) params.set('token', token);
+  try {
+    const res = await fetch(`${BRIDGE_URL}/v1/office/history?${params.toString()}`, { cache: 'no-store' });
+    if (!res.ok) return [];
+    const data = await res.json();
+    if (!data || !Array.isArray(data.messages)) return [];
+    return data.messages.map((m: Record<string, unknown>) => ({
+      type: 'message' as const,
+      id: String(m.id),
+      from: String(m.from),
+      to: String(m.to),
+      message: String(m.message),
+      thread_id: m.thread_id == null ? null : String(m.thread_id),
+      created_at: String(m.created_at),
+    }));
+  } catch (e) {
+    console.error('[BridgeClient] fetchOfficeHistory error:', e);
+    return [];
+  }
+}
+
 /** Fetch list of registered agents (public). */
 export async function fetchAgents(): Promise<BridgeAgent[]> {
   try {

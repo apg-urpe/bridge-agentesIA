@@ -748,6 +748,40 @@ async def office_feed(token: Optional[str] = Query(default=None)):
     )
 
 
+@app.get("/v1/office/history")
+async def office_history(
+    token: Optional[str] = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=500),
+):
+    """Public history feed for the pixel office: last N messages (any pair).
+    Same gate-token contract as /v1/office/feed so the SPA can prime its log
+    on first load before subscribing to the SSE stream."""
+    if REGISTRATION_TOKEN:
+        if not token or not secrets.compare_digest(token, REGISTRATION_TOKEN):
+            raise HTTPException(status_code=401, detail="Invalid gate token")
+    async with aiosqlite.connect(DATABASE_URL) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT id, from_agent, to_agent, message, thread_id, created_at "
+            "FROM messages ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        ) as cur:
+            rows = await cur.fetchall()
+    items = [
+        {
+            "id": r["id"],
+            "from": r["from_agent"],
+            "to": r["to_agent"],
+            "message": r["message"],
+            "thread_id": r["thread_id"],
+            "created_at": r["created_at"],
+        }
+        # Reverse so the client receives them oldest-first, ready to append.
+        for r in reversed(rows)
+    ]
+    return {"messages": items}
+
+
 @app.get("/v1/health", response_model=HealthResponse)
 async def health():
     return HealthResponse(status="ok", version=APP_VERSION)

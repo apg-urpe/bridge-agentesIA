@@ -26,6 +26,7 @@ import type {
 import {
   connectOfficeFeed,
   fetchAgents,
+  fetchOfficeHistory,
   type BridgeAgent,
   type OfficeFeedEvent,
 } from './bridgeClient.ts';
@@ -402,6 +403,19 @@ let messageListeners: Array<(messages: LiveMessage[]) => void> = [];
 let cancelFeed: (() => void) | null = null;
 let agentRefreshHandle: number | null = null;
 let statusListeners: Array<(s: 'connecting' | 'open' | 'closed') => void> = [];
+
+/** Load the persisted message history (oldest first) from the bridge DB. */
+export async function loadHistory(limit = 200): Promise<LiveMessage[]> {
+  const rows = await fetchOfficeHistory(limit);
+  return rows.map((r) => ({
+    id: r.id,
+    from: r.from,
+    to: r.to,
+    message: r.message,
+    thread_id: r.thread_id,
+    created_at: r.created_at,
+  }));
+}
 
 export function onNewMessages(listener: (messages: LiveMessage[]) => void): () => void {
   messageListeners.push(listener);
