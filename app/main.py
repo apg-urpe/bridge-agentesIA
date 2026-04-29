@@ -124,8 +124,8 @@ async def lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="bridge-agentesIA", version="1.0.0", lifespan=lifespan)
-APP_VERSION = "1.0.0"
+app = FastAPI(title="bridge-agentesIA", version="1.0.1", lifespan=lifespan)
+APP_VERSION = "1.0.1"
 
 # CORS: por defecto permitido cualquier origen (registro/dashboard publicos).
 # Para restringir, setear CORS_ORIGINS="https://a.com,https://b.com".
