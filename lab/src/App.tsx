@@ -423,6 +423,18 @@ function App() {
   const logRef = useRef<HTMLDivElement>(null);
   const [feedStatus, setFeedStatus] = useState<'connecting' | 'open' | 'closed'>('connecting');
   const [gatePhase, setGatePhase] = useState<GatePhase>('checking');
+  // Sidebar groups are collapsed by default; clicking a sender's name toggles
+  // their messages open. Tracked as a set of expanded agent ids.
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set());
+
+  const toggleGroup = useCallback((agentId: string) => {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(agentId)) next.delete(agentId);
+      else next.add(agentId);
+      return next;
+    });
+  }, []);
 
   // Editor (visual layout designer). isEditMode toggles via header button.
   const editorStateRef = useRef<EditorState | null>(null);
@@ -911,22 +923,40 @@ function App() {
               messageGroups.map((group) => {
                 const fromEntry = getAgentEntry(group.agentId);
                 const groupColor = fromEntry?.color || '#6b7280';
+                const isOpen = expandedGroups.has(group.agentId);
+                const lastTime = new Date(group.lastTs);
+                const lastTimeStr = isNaN(lastTime.getTime())
+                  ? ''
+                  : lastTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
                 return (
-                  <div key={group.agentId} style={{ marginBottom: '12px' }}>
-                    {/* Group header — sender agent */}
-                    <div style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      padding: '6px 10px',
-                      background: '#14142a',
-                      border: `1px solid ${groupColor}33`,
-                      borderLeft: `3px solid ${groupColor}`,
-                      borderRadius: '6px 6px 0 0',
-                      position: 'sticky',
-                      top: 0,
-                      zIndex: 1,
-                    }}>
+                  <div key={group.agentId} style={{ marginBottom: '6px' }}>
+                    {/* Clickable group header — toggles the message list */}
+                    <button
+                      type="button"
+                      onClick={() => toggleGroup(group.agentId)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        width: '100%',
+                        padding: '8px 10px',
+                        background: '#14142a',
+                        border: `1px solid ${groupColor}33`,
+                        borderLeft: `3px solid ${groupColor}`,
+                        borderRadius: isOpen ? '6px 6px 0 0' : '6px',
+                        cursor: 'pointer',
+                        textAlign: 'left',
+                        fontFamily: "'Inter', sans-serif",
+                      }}
+                    >
+                      <span style={{
+                        fontSize: '10px',
+                        color: groupColor,
+                        width: '10px',
+                        display: 'inline-block',
+                        transition: 'transform 0.15s',
+                        transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)',
+                      }}>▶</span>
                       <div style={{
                         width: '8px',
                         height: '8px',
@@ -939,7 +969,6 @@ function App() {
                         fontSize: '12px',
                         fontWeight: 700,
                         color: groupColor,
-                        fontFamily: "'Inter', sans-serif",
                       }}>
                         {getAgentDisplayName(group.agentId)}
                       </span>
@@ -947,74 +976,87 @@ function App() {
                         fontSize: '10px',
                         color: '#6b7280',
                         marginLeft: 'auto',
-                        fontFamily: "'Inter', sans-serif",
+                      }}>
+                        {lastTimeStr}
+                      </span>
+                      <span style={{
+                        fontSize: '10px',
+                        fontWeight: 600,
+                        color: '#9ca3af',
+                        background: '#1e1e3a',
+                        padding: '2px 6px',
+                        borderRadius: '8px',
+                        minWidth: '20px',
+                        textAlign: 'center',
                       }}>
                         {group.messages.length}
                       </span>
-                    </div>
+                    </button>
 
-                    {/* Messages from this sender */}
-                    <div style={{
-                      borderLeft: `1px solid ${groupColor}33`,
-                      borderRight: `1px solid ${groupColor}33`,
-                      borderBottom: `1px solid ${groupColor}33`,
-                      borderRadius: '0 0 6px 6px',
-                      padding: '4px',
-                      background: '#0c0c18',
-                    }}>
-                      {group.messages.map((msg) => {
-                        const toEntry = getAgentEntry(msg.to);
-                        const time = new Date(msg.timestamp);
-                        const timeStr = isNaN(time.getTime())
-                          ? msg.timestamp
-                          : time.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-                        return (
-                          <div key={msg.id} style={{
-                            padding: '8px 10px',
-                            marginBottom: '3px',
-                            borderRadius: '4px',
-                            background: '#14142a',
-                          }}>
-                            <div style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '6px',
+                    {/* Messages list — only rendered when the group is open */}
+                    {isOpen && (
+                      <div style={{
+                        borderLeft: `1px solid ${groupColor}33`,
+                        borderRight: `1px solid ${groupColor}33`,
+                        borderBottom: `1px solid ${groupColor}33`,
+                        borderRadius: '0 0 6px 6px',
+                        padding: '4px',
+                        background: '#0c0c18',
+                      }}>
+                        {group.messages.map((msg) => {
+                          const toEntry = getAgentEntry(msg.to);
+                          const time = new Date(msg.timestamp);
+                          const timeStr = isNaN(time.getTime())
+                            ? msg.timestamp
+                            : time.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+                          return (
+                            <div key={msg.id} style={{
+                              padding: '8px 10px',
                               marginBottom: '3px',
+                              borderRadius: '4px',
+                              background: '#14142a',
                             }}>
-                              <span style={{ fontSize: '10px', color: '#4b5563', fontFamily: "'Inter', sans-serif" }}>→</span>
-                              <span style={{
+                              <div style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                marginBottom: '3px',
+                              }}>
+                                <span style={{ fontSize: '10px', color: '#4b5563', fontFamily: "'Inter', sans-serif" }}>→</span>
+                                <span style={{
+                                  fontSize: '11px',
+                                  color: toEntry?.color || '#9ca3af',
+                                  fontFamily: "'Inter', sans-serif",
+                                }}>
+                                  {getAgentDisplayName(msg.to)}
+                                </span>
+                                <span style={{
+                                  fontSize: '9px',
+                                  color: '#4b5563',
+                                  marginLeft: 'auto',
+                                  fontFamily: "'Inter', sans-serif",
+                                }}>
+                                  {timeStr}
+                                </span>
+                              </div>
+                              <p style={{
                                 fontSize: '11px',
-                                color: toEntry?.color || '#9ca3af',
+                                color: '#9ca3af',
+                                margin: 0,
+                                lineHeight: 1.4,
                                 fontFamily: "'Inter', sans-serif",
+                                overflow: 'hidden',
+                                display: '-webkit-box',
+                                WebkitLineClamp: 3,
+                                WebkitBoxOrient: 'vertical',
                               }}>
-                                {getAgentDisplayName(msg.to)}
-                              </span>
-                              <span style={{
-                                fontSize: '9px',
-                                color: '#4b5563',
-                                marginLeft: 'auto',
-                                fontFamily: "'Inter', sans-serif",
-                              }}>
-                                {timeStr}
-                              </span>
+                                {msg.content}
+                              </p>
                             </div>
-                            <p style={{
-                              fontSize: '11px',
-                              color: '#9ca3af',
-                              margin: 0,
-                              lineHeight: 1.4,
-                              fontFamily: "'Inter', sans-serif",
-                              overflow: 'hidden',
-                              display: '-webkit-box',
-                              WebkitLineClamp: 3,
-                              WebkitBoxOrient: 'vertical',
-                            }}>
-                              {msg.content}
-                            </p>
-                          </div>
-                        );
-                      })}
-                    </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 );
               })
