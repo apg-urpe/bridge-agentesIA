@@ -1,0 +1,17 @@
+.git
+.gitignore
+.dockerignore
+.env
+.venv/
+data/
+__pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
+
+# dev-only assets — no van a la imagen de producción
+tests/
+scripts/
+requirements-dev.txt
+README.md

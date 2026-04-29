@@ -1,6 +1,8 @@
+import asyncio
 import base64
 import re
 import secrets
+import time
 import uuid
 import os
 import json
@@ -10,7 +12,7 @@ from pathlib import Path
 from typing import Optional
 from fastapi import FastAPI, Depends, HTTPException, Query, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, PlainTextResponse, FileResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, FileResponse, StreamingResponse
 import aiosqlite
 from dotenv import load_dotenv
 
@@ -252,6 +254,7 @@ STATUS_HTML = """<!DOCTYPE html>
   <div class="status-bar" style="margin-bottom: 1.5rem;">
     <a href="/guide" class="pill" style="text-decoration:none">📖 Guía (humanos)</a>
     <a href="/agent-guide" class="pill" style="text-decoration:none">🤖 Skill para agentes (.md)</a>
+    <a href="/office" class="pill" style="text-decoration:none">🏢 Office (live view)</a>
     <a href="/docs" class="pill" style="text-decoration:none">⚙ Swagger</a>
   </div>
   <div class="tabs">
@@ -302,7 +305,10 @@ STATUS_HTML = """<!DOCTYPE html>
       <h2 id="me-name">—</h2>
       <p>id: <code id="me-id">—</code> · plataforma: <span id="me-platform">—</span></p>
     </div>
-    <button class="danger" id="logout-btn">Cerrar sesión</button>
+    <div style="display:flex; gap:0.5rem; align-items:center;">
+      <a href="/office" class="pill" style="text-decoration:none">🏢 Office (live view)</a>
+      <button class="danger" id="logout-btn">Cerrar sesión</button>
+    </div>
   </div>
 
   <h2 class="section">Mis hilos <span class="refresh-info">Actualización automática cada 5s</span></h2>
@@ -655,6 +661,7 @@ document.getElementById('gate-btn').addEventListener('click', async () => {
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _GUIDE_HTML_PATH = _REPO_ROOT / "guide.html"
 _GUIDE_MD_PATH = _REPO_ROOT / "AGENT_INTEGRATION.md"
+_OFFICE_HTML_PATH = _REPO_ROOT / "office.html"
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -678,6 +685,72 @@ async def agent_guide(request: Request):
     text = _GUIDE_MD_PATH.read_text(encoding="utf-8")
     text = text.replace("{{BRIDGE_URL}}", _resolve_bridge_url(request))
     return PlainTextResponse(text, media_type="text/markdown; charset=utf-8")
+
+
+@app.get("/office", response_class=HTMLResponse)
+async def office_page():
+    if not _OFFICE_HTML_PATH.exists():
+        raise HTTPException(status_code=404, detail="office.html not found")
+    return HTMLResponse(_OFFICE_HTML_PATH.read_text(encoding="utf-8"))
+
+
+@app.get("/v1/office/feed")
+async def office_feed(token: Optional[str] = Query(default=None)):
+    if REGISTRATION_TOKEN:
+        if not token or not secrets.compare_digest(token, REGISTRATION_TOKEN):
+            raise HTTPException(status_code=401, detail="Invalid gate token")
+
+    poll_interval = 1.5
+    heartbeat_every = 20.0  # seconds
+
+    async def event_stream():
+        # Anchor at "now" so we only emit messages that arrive after the client connects.
+        last_seen = datetime.now(timezone.utc).isoformat()
+        last_heartbeat = time.monotonic()
+        # Initial hello so the client sees the stream is live.
+        yield f"data: {json.dumps({'type': 'hello', 'at': last_seen})}\n\n"
+        while True:
+            try:
+                async with aiosqlite.connect(DATABASE_URL) as db:
+                    db.row_factory = aiosqlite.Row
+                    async with db.execute(
+                        "SELECT id, from_agent, to_agent, message, thread_id, created_at "
+                        "FROM messages WHERE created_at > ? ORDER BY created_at ASC LIMIT 50",
+                        (last_seen,),
+                    ) as cur:
+                        new_rows = await cur.fetchall()
+                for r in new_rows:
+                    payload = {
+                        "type": "message",
+                        "id": r["id"],
+                        "from": r["from_agent"],
+                        "to": r["to_agent"],
+                        "message": r["message"],
+                        "thread_id": r["thread_id"],
+                        "created_at": r["created_at"],
+                    }
+                    yield f"data: {json.dumps(payload)}\n\n"
+                    last_seen = r["created_at"]
+            except Exception:
+                # Don't kill the stream on transient DB errors; keep alive.
+                pass
+
+            now_t = time.monotonic()
+            if now_t - last_heartbeat >= heartbeat_every:
+                yield ": ping\n\n"
+                last_heartbeat = now_t
+
+            await asyncio.sleep(poll_interval)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 @app.get("/v1/health", response_model=HealthResponse)

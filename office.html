@@ -1,0 +1,888 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>bridge-agentesIA · office</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #0d1117; color: #c9d1d9; font-family: monospace; }
+  body { display: flex; flex-direction: column; }
+  #topbar {
+    flex: 0 0 auto;
+    display: flex; align-items: center; gap: 0.75rem;
+    padding: 0.5rem 1rem;
+    background: #161b22;
+    border-bottom: 1px solid #30363d;
+    font-size: 0.8rem;
+    z-index: 10;
+  }
+  #topbar .title { color: #58a6ff; font-weight: bold; }
+  #topbar .dot { width: 8px; height: 8px; border-radius: 50%; background: #3fb950; animation: pulse 2s infinite; }
+  #topbar .dot.offline { background: #f85149; animation: none; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+  #topbar .spacer { flex: 1; }
+  #topbar a, #topbar button {
+    color: #c9d1d9; text-decoration: none;
+    background: #21262d; border: 1px solid #30363d; border-radius: 6px;
+    padding: 0.3rem 0.7rem; font-size: 0.75rem;
+    font-family: monospace; cursor: pointer;
+  }
+  #topbar a:hover, #topbar button:hover { background: #30363d; }
+  #stage {
+    flex: 1; position: relative;
+    background:
+      linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px),
+      #0a0e14;
+    background-size: 32px 32px;
+    overflow: hidden;
+    cursor: grab;
+  }
+  #stage:active { cursor: grabbing; }
+  canvas { display: block; image-rendering: pixelated; image-rendering: crisp-edges; }
+  #status {
+    position: absolute; bottom: 0.6rem; left: 0.8rem;
+    font-size: 0.7rem; color: #8b949e; pointer-events: none;
+    background: rgba(0,0,0,0.5); padding: 0.25rem 0.5rem; border-radius: 4px;
+  }
+  #gate-overlay {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(13, 17, 23, 0.95);
+    z-index: 100;
+  }
+  #gate-overlay.hidden { display: none; }
+  .gate-card {
+    background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+    padding: 1.5rem; max-width: 400px; width: 90%;
+  }
+  .gate-card h2 { color: #58a6ff; font-size: 1rem; margin-bottom: 0.5rem; }
+  .gate-card p { color: #8b949e; font-size: 0.8rem; margin-bottom: 1rem; }
+  .gate-card input {
+    width: 100%; font-family: monospace; background: #0d1117; color: #c9d1d9;
+    border: 1px solid #30363d; border-radius: 6px; padding: 0.5rem 0.75rem;
+    font-size: 0.85rem; margin-bottom: 0.75rem;
+  }
+  .gate-card input:focus { outline: none; border-color: #58a6ff; }
+  .gate-card button {
+    background: #1f6feb; color: #fff; border: 1px solid #1f6feb;
+    border-radius: 6px; padding: 0.5rem 1rem; font-size: 0.85rem;
+    font-family: monospace; cursor: pointer; width: 100%;
+  }
+  .gate-card .err { color: #f85149; font-size: 0.75rem; margin-bottom: 0.5rem; min-height: 1rem; }
+</style>
+</head>
+<body>
+  <div id="topbar">
+    <div class="dot" id="conn-dot"></div>
+    <span class="title">bridge · office</span>
+    <span id="agent-count" style="color:#8b949e;">— agentes</span>
+    <span id="msg-count" style="color:#8b949e;">— mensajes</span>
+    <div class="spacer"></div>
+    <button id="recenter-btn" title="Centrar cámara">centrar</button>
+    <a href="/">← dashboard</a>
+  </div>
+  <div id="stage">
+    <canvas id="canvas"></canvas>
+    <div id="status">conectando…</div>
+  </div>
+  <div id="gate-overlay" class="hidden">
+    <div class="gate-card">
+      <h2>Acceso restringido</h2>
+      <p>Esta vista requiere el token de acceso del bridge.</p>
+      <div class="err" id="gate-err"></div>
+      <input type="password" id="gate-input" placeholder="access token" autocomplete="off">
+      <button id="gate-btn">Entrar</button>
+    </div>
+  </div>
+
+<script>
+const GATE_KEY = 'bridge-agentesia-gate-token';
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const stage = document.getElementById('stage');
+const statusEl = document.getElementById('status');
+const connDot = document.getElementById('conn-dot');
+const agentCountEl = document.getElementById('agent-count');
+const msgCountEl = document.getElementById('msg-count');
+
+// ======== state ========
+const agents = new Map();        // agent_id -> {id, name, platform, color, deskX, deskY, x, y, state, target, walkStart, walkFromX, walkFromY, walkDuration, size}
+const speechBubbles = new Map(); // speakerId (emisor) -> [{text, createdAt, expiresAt, currentY, alpha}]
+const clones = [];               // [{parentId, color, x, y, walkFromX, walkFromY, target, walkStart, walkDuration, state, birthAt, bubble}]
+const meetings = [];             // [{speaker, listener, meetX, meetY, message, state, stateStart}]
+                                 // each speaker/listener: { kind: 'agent'|'clone', id?, clone? }
+let camera = { x: 0, y: 0 };     // pan offset
+let totalMessages = 0;
+let connected = false;
+
+// ======== palette ========
+const KNOWN_COLORS = {
+  rocky:   '#58a6ff',
+  '18':    '#f0883e',
+  bot18:   '#f0883e',
+  nexus:   '#a371f7',
+  pepper:  '#db61a2',
+  loki:    '#3fb950',
+  clawd:   '#d29922',
+  claude:  '#d29922',
+};
+function colorFor(id) {
+  const k = String(id).toLowerCase();
+  if (KNOWN_COLORS[k]) return KNOWN_COLORS[k];
+  // hash hsl
+  let h = 0;
+  for (let i = 0; i < k.length; i++) h = (h * 31 + k.charCodeAt(i)) >>> 0;
+  const hue = h % 360;
+  return `hsl(${hue}, 65%, 58%)`;
+}
+
+// ======== sizing ========
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  const w = stage.clientWidth;
+  const h = stage.clientHeight;
+  canvas.width = w * dpr;
+  canvas.height = h * dpr;
+  canvas.style.width = w + 'px';
+  canvas.style.height = h + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  layoutAgents();
+}
+window.addEventListener('resize', resize);
+
+// Stable hash for jittering each agent's slot deterministically.
+function hashStr(s) {
+  let h = 2166136261 >>> 0;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619) >>> 0;
+  return h;
+}
+
+function layoutAgents() {
+  const w = stage.clientWidth;
+  const h = stage.clientHeight;
+  const list = [...agents.values()];
+  if (list.length === 0) return;
+  const N = list.length;
+  // Grid with jitter: breaks the "everyone on a circle" feel, fills the screen.
+  const padding = 60;
+  const innerW = Math.max(120, w - 2 * padding);
+  const innerH = Math.max(120, h - 2 * padding);
+  const aspect = innerW / innerH;
+  const cols = Math.max(1, Math.round(Math.sqrt(N * aspect)));
+  const rows = Math.ceil(N / cols);
+  const cellW = innerW / cols;
+  const cellH = innerH / rows;
+  list.forEach((a, i) => {
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    // jitter inside each cell (±35% of cell), seeded by agent id
+    const jx = ((hashStr(a.id + ':x') % 1000) / 1000 - 0.5) * cellW * 0.7;
+    const jy = ((hashStr(a.id + ':y') % 1000) / 1000 - 0.5) * cellH * 0.7;
+    a.deskX = padding + cellW * (col + 0.5) + jx;
+    a.deskY = padding + cellH * (row + 0.5) + jy;
+    // Only place the agent at its desk the first time — subsequent layouts
+    // (e.g. periodic agent refetch) recompute desks but leave positions alone.
+    if (!a.placed) {
+      a.x = a.deskX;
+      a.y = a.deskY;
+      a.placed = true;
+      a.nextWanderAt = performance.now() + Math.random() * 2500;
+    }
+  });
+}
+
+// ======== camera (pan) ========
+let dragging = false;
+let dragStart = null;
+stage.addEventListener('mousedown', (e) => {
+  if (e.target.closest('#gate-overlay')) return;
+  dragging = true;
+  dragStart = { x: e.clientX - camera.x, y: e.clientY - camera.y };
+});
+window.addEventListener('mousemove', (e) => {
+  if (!dragging) return;
+  camera.x = e.clientX - dragStart.x;
+  camera.y = e.clientY - dragStart.y;
+});
+window.addEventListener('mouseup', () => { dragging = false; });
+document.getElementById('recenter-btn').addEventListener('click', () => {
+  camera = { x: 0, y: 0 };
+});
+
+// ======== gate ========
+async function checkGate(token) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers['X-Registration-Token'] = token;
+  const r = await fetch('/v1/gate/check', { method: 'POST', headers, cache: 'no-store' });
+  if (!r.ok) {
+    const t = await r.text();
+    let msg = t;
+    try { msg = JSON.parse(t).detail || t; } catch {}
+    throw new Error(msg);
+  }
+  return r.json();
+}
+
+async function ensureGate() {
+  let required = false;
+  try {
+    const s = await fetch('/v1/gate/status', { cache: 'no-store' }).then(r => r.json());
+    required = !!s.required;
+  } catch {}
+  if (!required) return null;
+
+  const stored = localStorage.getItem(GATE_KEY);
+  if (stored) {
+    try { await checkGate(stored); return stored; }
+    catch { localStorage.removeItem(GATE_KEY); }
+  }
+  return await promptGate();
+}
+
+function promptGate() {
+  return new Promise((resolve) => {
+    const overlay = document.getElementById('gate-overlay');
+    const input = document.getElementById('gate-input');
+    const btn = document.getElementById('gate-btn');
+    const err = document.getElementById('gate-err');
+    overlay.classList.remove('hidden');
+    err.textContent = '';
+    input.value = '';
+    input.focus();
+    const tryIt = async () => {
+      const t = input.value.trim();
+      err.textContent = '';
+      if (!t) { err.textContent = 'Pegá el access token.'; return; }
+      try {
+        await checkGate(t);
+        localStorage.setItem(GATE_KEY, t);
+        overlay.classList.add('hidden');
+        resolve(t);
+      } catch (e) {
+        err.textContent = e.message || 'Token inválido';
+      }
+    };
+    btn.onclick = tryIt;
+    input.onkeydown = (e) => { if (e.key === 'Enter') tryIt(); };
+  });
+}
+
+// ======== data: agents ========
+async function fetchAgents() {
+  const r = await fetch('/v1/agents', { cache: 'no-store' });
+  const list = await r.json();
+  for (const a of list) {
+    if (!agents.has(a.agent_id)) {
+      agents.set(a.agent_id, {
+        id: a.agent_id,
+        name: a.display_name || a.agent_id,
+        platform: a.platform || '',
+        color: colorFor(a.agent_id),
+        deskX: 0, deskY: 0,
+        x: 0, y: 0,
+        state: 'idle',         // 'idle' | 'walking' | 'meeting' | 'returning'
+        target: null,
+        walkStart: 0,
+        walkDuration: 1500,
+        walkFromX: 0, walkFromY: 0,
+        size: 22,              // current sprite size, lerped each frame
+        // idle wandering: agents drift slowly within a small radius of their desk
+        wanderTarget: null,    // {x,y} or null while resting
+        wanderStart: 0,
+        wanderDuration: 0,
+        wanderFromX: 0, wanderFromY: 0,
+        nextWanderAt: 0,
+      });
+    } else {
+      const cur = agents.get(a.agent_id);
+      cur.name = a.display_name || cur.name;
+      cur.platform = a.platform || cur.platform;
+    }
+  }
+  layoutAgents();
+  agentCountEl.textContent = `${agents.size} agentes`;
+}
+
+// ======== feed (SSE) ========
+let eventSource = null;
+function openFeed(gateToken) {
+  if (eventSource) eventSource.close();
+  const params = new URLSearchParams();
+  if (gateToken) params.set('token', gateToken);
+  const url = '/v1/office/feed' + (params.toString() ? '?' + params.toString() : '');
+  eventSource = new EventSource(url);
+  eventSource.onopen = () => {
+    connected = true;
+    connDot.classList.remove('offline');
+    statusEl.textContent = 'en vivo';
+  };
+  eventSource.onerror = () => {
+    connected = false;
+    connDot.classList.add('offline');
+    statusEl.textContent = 'reconectando…';
+  };
+  eventSource.onmessage = (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      if (data.type === 'message') handleIncomingMessage(data);
+      else if (data.type === 'agents_changed') fetchAgents();
+    } catch {}
+  };
+}
+
+// ======== animation ========
+function handleIncomingMessage(msg) {
+  totalMessages++;
+  msgCountEl.textContent = `${totalMessages} mensajes`;
+  // ensure both agents are known (race vs registration)
+  if (!agents.has(msg.from) || !agents.has(msg.to)) {
+    fetchAgents().then(() => dispatchMessage(msg));
+    return;
+  }
+  dispatchMessage(msg);
+}
+
+// dispatchMessage: a message creates a MEETING. Both sender and receiver walk
+// to the midpoint between their desks. Whoever is busy (already in a meeting
+// as themselves) spawns a clone — that's the mitosis case.
+function dispatchMessage(msg) {
+  const sender = agents.get(msg.from);
+  const receiver = agents.get(msg.to);
+  if (!sender || !receiver) return;
+  // central meeting point: midpoint with a small perpendicular offset so
+  // simultaneous meetings between the same pair don't pile up exactly.
+  const dx = receiver.deskX - sender.deskX;
+  const dy = receiver.deskY - sender.deskY;
+  const dist = Math.hypot(dx, dy) || 1;
+  const seed = (msg.from.charCodeAt(0) * 31 + msg.to.charCodeAt(0) + (msg.message || '').length) % 6;
+  const offMag = (seed - 2.5) * 9;  // -22 .. +22
+  const px = -dy / dist;
+  const py = dx / dist;
+  const cmX = (sender.deskX + receiver.deskX) / 2 + px * offMag;
+  const cmY = (sender.deskY + receiver.deskY) / 2 + py * offMag;
+  // Speaker stops slightly on the sender side, listener on the receiver side,
+  // so they face each other instead of overlapping at the same pixel.
+  const gap = 18;
+  const ux = dx / dist, uy = dy / dist;
+  const speakerStop  = { x: cmX - ux * gap, y: cmY - uy * gap };
+  const listenerStop = { x: cmX + ux * gap, y: cmY + uy * gap };
+
+  const speaker  = createMeetingEntity(sender,   speakerStop.x,  speakerStop.y);
+  const listener = createMeetingEntity(receiver, listenerStop.x, listenerStop.y);
+
+  meetings.push({
+    speaker, listener,
+    meetX: cmX, meetY: cmY,
+    message: msg.message,
+    state: 'walking',         // 'walking' → 'meeting' → 'returning' → (removed)
+    stateStart: performance.now(),
+  });
+}
+
+// Returns an entity descriptor pointing to the agent (if free) or a fresh clone.
+function createMeetingEntity(agent, targetX, targetY) {
+  const now = performance.now();
+  if (agent.state === 'idle') {
+    // cancel any wander in progress and start the walk from where the agent is
+    agent.wanderTarget = null;
+    agent.state = 'walking';
+    agent.walkFromX = agent.x;
+    agent.walkFromY = agent.y;
+    agent.target = { x: targetX, y: targetY };
+    agent.walkStart = now;
+    const dist = Math.hypot(targetX - agent.x, targetY - agent.y) || 1;
+    agent.walkDuration = Math.min(1500, Math.max(600, dist * 3.5));
+    return { kind: 'agent', id: agent.id };
+  }
+  const dist = Math.hypot(targetX - agent.deskX, targetY - agent.deskY) || 1;
+  const dur = Math.min(1500, Math.max(600, dist * 3.5));
+  const c = {
+    parentId: agent.id,
+    color: agent.color,
+    x: agent.deskX, y: agent.deskY,
+    walkFromX: agent.deskX, walkFromY: agent.deskY,
+    target: { x: targetX, y: targetY },
+    walkStart: now,
+    walkDuration: dur,
+    state: 'walking',  // 'walking' → 'meeting' → 'returning' (then removed)
+    birthAt: now,
+    bubble: null,
+  };
+  clones.push(c);
+  return { kind: 'clone', clone: c };
+}
+
+// helpers to read entity state regardless of whether it's an agent or clone
+function entityObj(e) {
+  return e.kind === 'agent' ? agents.get(e.id) : e.clone;
+}
+function entityArrived(e) {
+  const o = entityObj(e);
+  if (!o || (o.state !== 'walking' && o.state !== 'returning')) return false;
+  return (performance.now() - o.walkStart) >= o.walkDuration;
+}
+function entityIsHome(e) {
+  if (e.kind === 'agent') return entityObj(e).state === 'idle';
+  // clone: home means it was reabsorbed (no longer in clones[])
+  return clones.indexOf(e.clone) === -1;
+}
+function sendEntityHome(e) {
+  const o = entityObj(e);
+  if (!o) return;
+  const homeX = e.kind === 'agent' ? o.deskX : agents.get(o.parentId).deskX;
+  const homeY = e.kind === 'agent' ? o.deskY : agents.get(o.parentId).deskY;
+  const now = performance.now();
+  o.walkFromX = o.x; o.walkFromY = o.y;
+  o.target = { x: homeX, y: homeY };
+  o.walkStart = now;
+  const dist = Math.hypot(homeX - o.x, homeY - o.y) || 1;
+  o.walkDuration = Math.min(1500, Math.max(600, dist * 3.5));
+  o.state = 'returning';
+}
+function showBubbleAtEntity(e, message) {
+  if (e.kind === 'agent') {
+    showBubble(e.id, message);
+  } else {
+    e.clone.bubble = {
+      text: String(message || '').slice(0, 280),
+      createdAt: performance.now(),
+      expiresAt: performance.now() + 4500,
+    };
+  }
+}
+
+function showBubble(agentId, text) {
+  const now = performance.now();
+  const list = speechBubbles.get(agentId) || [];
+  list.push({
+    text: String(text || '').slice(0, 280),
+    createdAt: now,
+    expiresAt: now + 5000,
+    currentY: null,  // initialized on first render to its target
+    alpha: 0,        // fade-in
+  });
+  speechBubbles.set(agentId, list);
+}
+
+// ======== render loop ========
+function render(now) {
+  const w = stage.clientWidth;
+  const h = stage.clientHeight;
+  ctx.clearRect(0, 0, w, h);
+
+  ctx.save();
+  ctx.translate(camera.x, camera.y);
+
+  // tick agents (walking/returning). 'meeting' state means parked at meet point.
+  for (const a of agents.values()) {
+    if (a.state === 'walking' || a.state === 'returning') {
+      const t = Math.min(1, (now - a.walkStart) / a.walkDuration);
+      a.x = a.walkFromX + (a.target.x - a.walkFromX) * t;
+      a.y = a.walkFromY + (a.target.y - a.walkFromY) * t;
+      const bob = Math.sin((now - a.walkStart) / 80) * 1.8;
+      a.y += bob;
+      if (t >= 1) {
+        if (a.state === 'returning') {
+          a.x = a.deskX;
+          a.y = a.deskY;
+          a.state = 'idle';
+          a.nextWanderAt = now + 800 + Math.random() * 2000;
+        }
+        // 'walking' → just stop bobbing; the meeting will switch state to 'meeting'.
+      }
+    } else if (a.state === 'idle') {
+      tickWander(a, now);
+    }
+  }
+
+  // tick meetings: orchestrate the speaker/listener lifecycle.
+  for (let i = meetings.length - 1; i >= 0; i--) {
+    const m = meetings[i];
+    if (m.state === 'walking') {
+      if (entityArrived(m.speaker) && entityArrived(m.listener)) {
+        m.state = 'meeting';
+        m.stateStart = now;
+        // freeze both at their stop points
+        const so = entityObj(m.speaker);   if (so) so.state = 'meeting';
+        const lo = entityObj(m.listener);  if (lo) lo.state = 'meeting';
+        showBubbleAtEntity(m.speaker, m.message);
+      }
+    } else if (m.state === 'meeting') {
+      if (now - m.stateStart >= 1500) {
+        m.state = 'returning';
+        m.stateStart = now;
+        sendEntityHome(m.speaker);
+        sendEntityHome(m.listener);
+      }
+    } else if (m.state === 'returning') {
+      if (entityIsHome(m.speaker) && entityIsHome(m.listener)) {
+        meetings.splice(i, 1);
+      }
+    }
+  }
+
+  // draw desks first
+  for (const a of agents.values()) drawDesk(a);
+
+  // tick clones. The meeting handler transitions states; we just animate motion
+  // and remove the clone once it's reabsorbed at the parent's desk.
+  for (let i = clones.length - 1; i >= 0; i--) {
+    const c = clones[i];
+    if (c.state === 'walking' || c.state === 'returning') {
+      const t = Math.min(1, (now - c.walkStart) / c.walkDuration);
+      c.x = c.walkFromX + (c.target.x - c.walkFromX) * t;
+      c.y = c.walkFromY + (c.target.y - c.walkFromY) * t;
+      const bob = Math.sin((now - c.walkStart) / 80) * 1.4;
+      c.y += bob;
+      if (t >= 1) {
+        if (c.state === 'returning') {
+          clones.splice(i, 1);
+          continue;
+        }
+        // 'walking' → stop bobbing; meeting handler will flip to 'meeting'.
+      }
+    }
+    // 'meeting' → stays parked; bubble already attached.
+  }
+
+  // size lerp: agents with active clones shrink to MITOSIS_SIZE, rest grow back to FULL
+  const cloneCountByParent = new Map();
+  for (const c of clones) {
+    cloneCountByParent.set(c.parentId, (cloneCountByParent.get(c.parentId) || 0) + 1);
+  }
+  for (const a of agents.values()) {
+    const targetSize = (cloneCountByParent.get(a.id) || 0) > 0 ? MITOSIS_SIZE : FULL_SIZE;
+    a.size += (targetSize - a.size) * 0.18;  // smooth shrink/grow
+  }
+
+  // draw agents: idle first, busy (walking/meeting/returning) on top
+  // so the moving sprite + its nameplate are never hidden behind a static one.
+  const busyAgents = [];
+  for (const a of agents.values()) {
+    if (a.state === 'idle') drawAgent(a);
+    else busyAgents.push(a);
+  }
+  for (const a of busyAgents) drawAgent(a);
+
+  // clones drawn on top of idle agents but bubbles handled separately below
+  for (const c of clones) drawClone(c);
+
+  // draw stacked bubbles per speaker (agents)
+  for (const [agentId, list] of speechBubbles.entries()) {
+    // drop expired
+    const live = list.filter(b => now < b.expiresAt);
+    if (live.length === 0) { speechBubbles.delete(agentId); continue; }
+    speechBubbles.set(agentId, live);
+    const a = agents.get(agentId);
+    if (!a) continue;
+    drawBubbleStack(a, live, now);
+  }
+
+  // draw bubbles attached to clones
+  for (const c of clones) {
+    if (c.bubble && now < c.bubble.expiresAt) {
+      drawCloneBubble(c, c.bubble, now);
+    }
+  }
+
+  ctx.restore();
+  requestAnimationFrame(render);
+}
+
+function drawClone(c) {
+  const now = performance.now();
+  const baseSize = MITOSIS_SIZE;
+  // birth animation: scale 0 → 1 over 400ms, with a small wobble
+  const sinceBirth = now - c.birthAt;
+  let scale = 1;
+  if (sinceBirth < 400) {
+    const t = sinceBirth / 400;
+    // ease-out + wobble that tapers off
+    scale = t * t * (3 - 2 * t);
+    scale *= 1 + Math.sin(sinceBirth / 25) * 0.18 * (1 - t);
+  }
+  // death animation: when returning and getting close to parent desk, shrink to 0
+  if (c.state === 'returning' && c.target) {
+    const dx = c.target.x - c.x;
+    const dy = c.target.y - c.y;
+    const distHome = Math.hypot(dx, dy);
+    if (distHome < 28) {
+      scale *= Math.max(0, distHome / 28);
+    }
+  }
+  // walk pulse: subtle pulsing while moving
+  const pulse = (c.state === 'walking' || c.state === 'returning')
+    ? walkPulse(c.walkStart, 0.10) : 1;
+  const size = baseSize * scale * pulse;
+  if (size < 1) return;
+  // shadow
+  ctx.fillStyle = 'rgba(0,0,0,' + (0.4 * scale).toFixed(2) + ')';
+  ctx.beginPath();
+  ctx.ellipse(c.x, c.y + size/2 + 1, size/2 + 1, 3 * scale, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // body
+  ctx.fillStyle = c.color;
+  ctx.fillRect(Math.round(c.x - size/2), Math.round(c.y - size/2), size, size);
+  ctx.strokeStyle = '#000';
+  ctx.lineWidth = 1.2;
+  ctx.strokeRect(Math.round(c.x - size/2), Math.round(c.y - size/2), size, size);
+  // eyes only once big enough
+  if (size > 7) {
+    const eyeOff = Math.max(1.5, size * 0.18);
+    const eyeS   = Math.max(1, size * 0.09);
+    ctx.fillStyle = '#000';
+    ctx.fillRect(Math.round(c.x - eyeOff - eyeS/2), Math.round(c.y - eyeS), eyeS, eyeS);
+    ctx.fillRect(Math.round(c.x + eyeOff - eyeS/2), Math.round(c.y - eyeS), eyeS, eyeS);
+  }
+}
+
+function drawCloneBubble(c, bubble, now) {
+  const lines = wrapText(bubble.text, 32);
+  ctx.font = '11px monospace';
+  const lineH = 14;
+  const padX = 8, padY = 6;
+  const w = Math.max(...lines.map(l => ctx.measureText(l).width)) + padX * 2;
+  const h = lines.length * lineH + padY * 2;
+  const cx = c.x;
+  const cy = c.y - 14 - 14 - h / 2;
+  const sinceCreated = now - bubble.createdAt;
+  const remaining = bubble.expiresAt - now;
+  const fadeIn = Math.min(1, sinceCreated / 200);
+  const fadeOut = Math.min(1, remaining / 600);
+  const alpha = Math.min(fadeIn, fadeOut);
+  drawSingleBubble(cx, cy, w, h, lines, padX, padY, lineH, alpha, true);
+}
+
+function drawDesk(a) {
+  // simple darker rect under the agent representing the desk
+  ctx.fillStyle = '#1c2128';
+  ctx.strokeStyle = '#30363d';
+  ctx.lineWidth = 1;
+  const dw = 56, dh = 36;
+  ctx.fillRect(a.deskX - dw/2, a.deskY - dh/2 + 6, dw, dh);
+  ctx.strokeRect(a.deskX - dw/2, a.deskY - dh/2 + 6, dw, dh);
+  // chair indicator
+  ctx.fillStyle = '#21262d';
+  ctx.fillRect(a.deskX - 8, a.deskY + dh/2 + 4, 16, 5);
+}
+
+// sprite sizes: full (idle/single walker) and mitosis (when clones are active)
+const FULL_SIZE = 22;
+const MITOSIS_SIZE = 16;
+
+// walk pulse: subtle squash-and-stretch while moving, ~2 Hz, ±10%
+function walkPulse(walkStart, amplitude) {
+  if (walkStart == null) return 1;
+  const t = (performance.now() - walkStart) / 1000;
+  return 1 + Math.sin(t * 12) * (amplitude ?? 0.10);
+}
+
+// Idle wander: while idle, agents drift around their desk so the office feels
+// alive. Generous radius so neighbours overlap visually. Cancelled when a
+// meeting starts.
+function tickWander(a, now) {
+  if (a.wanderTarget) {
+    const t = Math.min(1, (now - a.wanderStart) / a.wanderDuration);
+    a.x = a.wanderFromX + (a.wanderTarget.x - a.wanderFromX) * t;
+    a.y = a.wanderFromY + (a.wanderTarget.y - a.wanderFromY) * t;
+    if (t >= 1) {
+      a.wanderTarget = null;
+      a.nextWanderAt = now + 1500 + Math.random() * 4000;  // rest 1.5-5.5s
+    }
+    return;
+  }
+  if (now < a.nextWanderAt) return;
+  // pick a new target within a wide radius around the desk
+  const angle = Math.random() * Math.PI * 2;
+  const r = 50 + Math.random() * 80;  // 50-130 px
+  let tx = a.deskX + Math.cos(angle) * r;
+  let ty = a.deskY + Math.sin(angle) * r;
+  // clamp inside viewport with a small margin so they don't escape the screen
+  const margin = 24;
+  const w = stage.clientWidth, h = stage.clientHeight;
+  tx = Math.max(margin, Math.min(w - margin, tx));
+  ty = Math.max(margin, Math.min(h - margin, ty));
+  const dist = Math.hypot(tx - a.x, ty - a.y) || 1;
+  a.wanderFromX = a.x;
+  a.wanderFromY = a.y;
+  a.wanderTarget = { x: tx, y: ty };
+  a.wanderStart = now;
+  a.wanderDuration = Math.max(800, dist * 22);  // ~45 px/sec, slow drift
+}
+
+function drawAgent(a) {
+  let pulse = 1;
+  if (a.state === 'walking' || a.state === 'returning') {
+    pulse = walkPulse(a.walkStart, 0.10);
+  } else if (a.state === 'idle' && a.wanderTarget) {
+    pulse = walkPulse(a.wanderStart, 0.06);  // gentler pulse while drifting
+  }
+  const size = a.size * pulse;
+  // shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  ctx.beginPath();
+  ctx.ellipse(a.x, a.y + size/2 + 2, size/2 + 2, 4, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // body
+  ctx.fillStyle = a.color;
+  ctx.fillRect(a.x - size/2, a.y - size/2, size, size);
+  // border
+  ctx.strokeStyle = '#000';
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(a.x - size/2, a.y - size/2, size, size);
+  // tiny "eyes" (scaled to sprite)
+  const eyeOff = Math.max(2, Math.round(size * 0.18));
+  const eyeS   = Math.max(1, Math.round(size * 0.09));
+  ctx.fillStyle = '#000';
+  ctx.fillRect(a.x - eyeOff - eyeS/2, a.y - eyeS, eyeS, eyeS);
+  ctx.fillRect(a.x + eyeOff - eyeS/2, a.y - eyeS, eyeS, eyeS);
+  // nameplate (Minecraft-style)
+  drawNameplate(a.x, a.y - size/2 - 14, a.name);
+}
+
+const NAMEPLATE_FONT = '8px "Press Start 2P", monospace';
+function drawNameplate(cx, cy, text) {
+  ctx.font = NAMEPLATE_FONT;
+  const w = ctx.measureText(text).width;
+  const padX = 6, padY = 4;
+  const bw = Math.ceil(w + padX * 2);
+  const bh = 8 + padY * 2;
+  // Minecraft-style nameplate: dark translucent box, no rounded corners
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.fillRect(Math.round(cx - bw/2), Math.round(cy - bh/2), bw, bh);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  // drop shadow (1px down-right, dark gray)
+  ctx.fillStyle = '#3F3F3F';
+  ctx.fillText(text, Math.round(cx) + 1, Math.round(cy) + 1);
+  // main text white
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText(text, Math.round(cx), Math.round(cy));
+}
+
+function wrapText(text, maxChars) {
+  const words = String(text).split(/\s+/);
+  const lines = [];
+  let cur = '';
+  for (const w of words) {
+    if ((cur + ' ' + w).trim().length > maxChars) {
+      if (cur) lines.push(cur);
+      cur = w.length > maxChars ? w.slice(0, maxChars - 1) + '…' : w;
+    } else {
+      cur = (cur ? cur + ' ' : '') + w;
+    }
+  }
+  if (cur) lines.push(cur);
+  return lines.slice(0, 5);
+}
+
+function drawBubbleStack(agent, list, now) {
+  // newest at slot 0 (closest to agent), older bubbles stacked above
+  const sorted = [...list].sort((a, b) => b.createdAt - a.createdAt);
+  ctx.font = '11px monospace';
+  const lineH = 14;
+  const padX = 8, padY = 6;
+  const gap = 4;
+  // baseline: just above the head + nameplate
+  const baseTop = agent.y - 22 - 18;  // bottom edge of slot 0
+  const cx = agent.x;
+  // first pass: compute target Y for each slot (center y of each bubble)
+  let cursorBottom = baseTop;
+  const layout = sorted.map(b => {
+    const lines = wrapText(b.text, 32);
+    const w = Math.max(...lines.map(l => ctx.measureText(l).width)) + padX * 2;
+    const h = lines.length * lineH + padY * 2;
+    const targetY = cursorBottom - h / 2;  // center
+    cursorBottom = (cursorBottom - h - gap);
+    return { b, lines, w, h, targetY };
+  });
+  // second pass: lerp current Y toward target, draw oldest first so newer overlap on top
+  for (let i = layout.length - 1; i >= 0; i--) {
+    const { b, lines, w, h, targetY } = layout[i];
+    if (b.currentY === null) {
+      b.currentY = targetY;
+    } else {
+      b.currentY += (targetY - b.currentY) * 0.18;
+    }
+    // alpha: fade-in over 200ms, fade-out in last 600ms
+    const sinceCreated = now - b.createdAt;
+    const remaining = b.expiresAt - now;
+    const fadeIn = Math.min(1, sinceCreated / 200);
+    const fadeOut = Math.min(1, remaining / 600);
+    b.alpha = Math.min(fadeIn, fadeOut);
+    drawSingleBubble(cx, b.currentY, w, h, lines, padX, padY, lineH, b.alpha, i === 0);
+  }
+}
+
+function drawSingleBubble(cx, cy, w, h, lines, padX, padY, lineH, alpha, withTail) {
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = '#fff';
+  ctx.strokeStyle = '#000';
+  ctx.lineWidth = 1.5;
+  roundRect(cx - w/2, cy - h/2, w, h, 6);
+  ctx.fill();
+  ctx.stroke();
+  if (withTail) {
+    ctx.beginPath();
+    ctx.moveTo(cx - 5, cy + h/2);
+    ctx.lineTo(cx, cy + h/2 + 7);
+    ctx.lineTo(cx + 5, cy + h/2);
+    ctx.closePath();
+    ctx.fillStyle = '#fff';
+    ctx.fill();
+    ctx.strokeStyle = '#000';
+    ctx.stroke();
+  }
+  ctx.fillStyle = '#0d1117';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  lines.forEach((line, i) => {
+    ctx.fillText(line, cx - w/2 + padX, cy - h/2 + padY + i * lineH);
+  });
+  ctx.globalAlpha = 1;
+}
+
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+// ======== bootstrap ========
+(async function init() {
+  resize();
+  let gateToken = null;
+  try {
+    gateToken = await ensureGate();
+  } catch (e) {
+    statusEl.textContent = 'gate error: ' + (e.message || 'unknown');
+    return;
+  }
+  // wait for the pixel font to load so the first frame already uses it
+  try {
+    if (document.fonts && document.fonts.load) {
+      await document.fonts.load('8px "Press Start 2P"');
+    }
+  } catch {}
+  await fetchAgents();
+  // re-fetch agents periodically in case new ones register
+  setInterval(fetchAgents, 30000);
+  openFeed(gateToken);
+  requestAnimationFrame(render);
+})();
+</script>
+</body>
+</html>

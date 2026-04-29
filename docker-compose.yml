@@ -6,6 +6,12 @@ services:
     env_file: .env
     volumes:
       - bridge_data:/app/data
+      # Live-mount source files so edits reflect without rebuilding the image.
+      - ./app:/app/app:ro
+      - ./tests:/app/tests:ro
+      - ./office.html:/app/office.html:ro
+      - ./guide.html:/app/guide.html:ro
+      - ./AGENT_INTEGRATION.md:/app/AGENT_INTEGRATION.md:ro
     restart: unless-stopped
 
 volumes:
