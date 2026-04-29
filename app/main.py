@@ -25,6 +25,7 @@ from .models import (
     AckResponse, HealthResponse,
     RegisterRequest, RegisterResponse, AgentInfo,
     AdminPatchAgent, AdminPatchResponse,
+    AppearanceRequest,
 )
 from .auth import get_current_agent, hash_api_key
 
@@ -793,6 +794,8 @@ async def register_agent(
         api_key=api_key,
         created_at=created_at,
         trusted=False,
+        palette=None,
+        hue_shift=None,
     )
 
 
@@ -800,7 +803,8 @@ async def register_agent(
 async def list_agents(db: aiosqlite.Connection = Depends(get_db)):
     db.row_factory = aiosqlite.Row
     async with db.execute(
-        "SELECT agent_id, display_name, platform, created_at, trusted FROM agents WHERE revoked=0 ORDER BY created_at ASC"
+        "SELECT agent_id, display_name, platform, created_at, trusted, palette, hue_shift "
+        "FROM agents WHERE revoked=0 ORDER BY created_at ASC"
     ) as cur:
         rows = await cur.fetchall()
     return [AgentInfo(
@@ -809,6 +813,8 @@ async def list_agents(db: aiosqlite.Connection = Depends(get_db)):
         platform=r["platform"],
         created_at=r["created_at"],
         trusted=bool(r["trusted"]),
+        palette=r["palette"],
+        hue_shift=r["hue_shift"],
     ) for r in rows]
 
 
@@ -819,7 +825,8 @@ async def whoami(
 ):
     db.row_factory = aiosqlite.Row
     async with db.execute(
-        "SELECT agent_id, display_name, platform, created_at, trusted FROM agents WHERE agent_id=?",
+        "SELECT agent_id, display_name, platform, created_at, trusted, palette, hue_shift "
+        "FROM agents WHERE agent_id=?",
         (agent,),
     ) as cur:
         row = await cur.fetchone()
@@ -831,6 +838,60 @@ async def whoami(
         platform=row["platform"],
         created_at=row["created_at"],
         trusted=bool(row["trusted"]),
+        palette=row["palette"],
+        hue_shift=row["hue_shift"],
+    )
+
+
+@app.patch("/v1/me/appearance", response_model=AgentInfo)
+async def update_my_appearance(
+    body: AppearanceRequest,
+    agent: str = Depends(get_current_agent),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """Self-service appearance: each agent can override their pixel-office
+    palette (0–5) and hue_shift (0–359). Pass `clear=true` to reset.
+    """
+    db.row_factory = aiosqlite.Row
+    if body.clear:
+        await db.execute(
+            "UPDATE agents SET palette=NULL, hue_shift=NULL WHERE agent_id=?",
+            (agent,),
+        )
+    else:
+        fields: list[str] = []
+        values: list = []
+        if body.palette is not None:
+            fields.append("palette=?")
+            values.append(body.palette)
+        if body.hue_shift is not None:
+            fields.append("hue_shift=?")
+            values.append(body.hue_shift)
+        if not fields:
+            raise HTTPException(
+                status_code=400,
+                detail="Provide palette and/or hue_shift, or pass clear=true to reset.",
+            )
+        values.append(agent)
+        await db.execute(f"UPDATE agents SET {', '.join(fields)} WHERE agent_id=?", values)
+    await db.commit()
+
+    async with db.execute(
+        "SELECT agent_id, display_name, platform, created_at, trusted, palette, hue_shift "
+        "FROM agents WHERE agent_id=?",
+        (agent,),
+    ) as cur:
+        row = await cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return AgentInfo(
+        agent_id=row["agent_id"],
+        display_name=row["display_name"],
+        platform=row["platform"],
+        created_at=row["created_at"],
+        trusted=bool(row["trusted"]),
+        palette=row["palette"],
+        hue_shift=row["hue_shift"],
     )
 
 

@@ -46,6 +46,8 @@ class RegisterResponse(BaseModel):
     api_key: str
     created_at: str
     trusted: bool = False
+    palette: Optional[int] = None
+    hue_shift: Optional[int] = None
 
 class AgentInfo(BaseModel):
     agent_id: str
@@ -53,6 +55,14 @@ class AgentInfo(BaseModel):
     platform: Optional[str]
     created_at: str
     trusted: bool = False
+    palette: Optional[int] = None
+    hue_shift: Optional[int] = None
+
+class AppearanceRequest(BaseModel):
+    """Self-service appearance override. Pass null to clear and fall back to defaults."""
+    palette: Optional[int] = Field(None, ge=0, le=5)
+    hue_shift: Optional[int] = Field(None, ge=0, le=359)
+    clear: bool = False  # if true, both fields are reset regardless of payload
 
 class AdminPatchAgent(BaseModel):
     display_name: Optional[str] = Field(None, min_length=1, max_length=64)

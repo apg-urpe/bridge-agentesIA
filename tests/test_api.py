@@ -171,6 +171,123 @@ def test_threads_groups_messages_by_thread_id(client):
     assert threads[0]["message_count"] == 3
 
 
+# ---------- self-service appearance ----------
+
+def test_appearance_defaults_are_null(client):
+    rocky = register_agent(client, "rocky")
+    me = client.get("/v1/me", headers={"X-API-Key": rocky["api_key"]}).json()
+    assert me["palette"] is None
+    assert me["hue_shift"] is None
+
+
+def test_appearance_update_persists(client):
+    rocky = register_agent(client, "rocky")
+    r = client.patch(
+        "/v1/me/appearance",
+        headers={"X-API-Key": rocky["api_key"]},
+        json={"palette": 3, "hue_shift": 120},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["palette"] == 3
+    assert body["hue_shift"] == 120
+
+    # Should also surface in /v1/me and /v1/agents
+    me = client.get("/v1/me", headers={"X-API-Key": rocky["api_key"]}).json()
+    assert me["palette"] == 3 and me["hue_shift"] == 120
+    listing = client.get("/v1/agents").json()
+    rocky_listed = next(a for a in listing if a["agent_id"] == "rocky")
+    assert rocky_listed["palette"] == 3
+    assert rocky_listed["hue_shift"] == 120
+
+
+def test_appearance_partial_update(client):
+    rocky = register_agent(client, "rocky")
+    client.patch(
+        "/v1/me/appearance",
+        headers={"X-API-Key": rocky["api_key"]},
+        json={"palette": 2, "hue_shift": 90},
+    )
+    # Update only hue_shift; palette must persist
+    r = client.patch(
+        "/v1/me/appearance",
+        headers={"X-API-Key": rocky["api_key"]},
+        json={"hue_shift": 200},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["palette"] == 2
+    assert body["hue_shift"] == 200
+
+
+def test_appearance_clear_resets_to_null(client):
+    rocky = register_agent(client, "rocky")
+    client.patch(
+        "/v1/me/appearance",
+        headers={"X-API-Key": rocky["api_key"]},
+        json={"palette": 5, "hue_shift": 300},
+    )
+    r = client.patch(
+        "/v1/me/appearance",
+        headers={"X-API-Key": rocky["api_key"]},
+        json={"clear": True},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["palette"] is None
+    assert body["hue_shift"] is None
+
+
+def test_appearance_empty_payload_rejected(client):
+    rocky = register_agent(client, "rocky")
+    r = client.patch(
+        "/v1/me/appearance",
+        headers={"X-API-Key": rocky["api_key"]},
+        json={},
+    )
+    assert r.status_code == 400
+
+
+def test_appearance_invalid_palette_rejected(client):
+    rocky = register_agent(client, "rocky")
+    r = client.patch(
+        "/v1/me/appearance",
+        headers={"X-API-Key": rocky["api_key"]},
+        json={"palette": 99},
+    )
+    assert r.status_code == 422  # pydantic range
+
+
+def test_appearance_invalid_hue_rejected(client):
+    rocky = register_agent(client, "rocky")
+    r = client.patch(
+        "/v1/me/appearance",
+        headers={"X-API-Key": rocky["api_key"]},
+        json={"hue_shift": -10},
+    )
+    assert r.status_code == 422
+
+
+def test_appearance_requires_auth(client):
+    register_agent(client, "rocky")
+    r = client.patch("/v1/me/appearance", json={"palette": 0})
+    assert r.status_code == 422  # missing X-API-Key header
+
+
+def test_appearance_isolated_per_agent(client):
+    rocky = register_agent(client, "rocky")
+    pepper = register_agent(client, "pepper")
+    client.patch(
+        "/v1/me/appearance",
+        headers={"X-API-Key": rocky["api_key"]},
+        json={"palette": 4, "hue_shift": 45},
+    )
+    # Pepper is unaffected
+    me = client.get("/v1/me", headers={"X-API-Key": pepper["api_key"]}).json()
+    assert me["palette"] is None
+    assert me["hue_shift"] is None
+
+
 # ---------- gate ----------
 
 def test_gate_status_open_when_no_token(client):

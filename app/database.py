@@ -36,6 +36,13 @@ async def _init_schema(db: aiosqlite.Connection) -> None:
         await db.execute("ALTER TABLE agents ADD COLUMN trusted INTEGER NOT NULL DEFAULT 0")
     except aiosqlite.OperationalError:
         pass
+    # Self-service appearance: each agent can override the office's hash-derived
+    # palette and hue tint via PATCH /v1/me/appearance. NULL means "use default".
+    for col_def in ("palette INTEGER", "hue_shift INTEGER"):
+        try:
+            await db.execute(f"ALTER TABLE agents ADD COLUMN {col_def}")
+        except aiosqlite.OperationalError:
+            pass
     await db.execute("CREATE INDEX IF NOT EXISTS idx_agents_key_hash ON agents(api_key_hash)")
     await db.commit()
 
