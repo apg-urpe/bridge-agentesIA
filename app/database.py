@@ -38,7 +38,14 @@ async def _init_schema(db: aiosqlite.Connection) -> None:
         pass
     # Self-service appearance: each agent can override the office's hash-derived
     # palette and hue tint via PATCH /v1/me/appearance. NULL means "use default".
-    for col_def in ("palette INTEGER", "hue_shift INTEGER"):
+    # Owner identity (optional) lets users say "talk to Antony's agent" — the
+    # consuming agent can resolve a person name to an agent_id via /v1/agents.
+    for col_def in (
+        "palette INTEGER",
+        "hue_shift INTEGER",
+        "owner_first_name TEXT",
+        "owner_last_name TEXT",
+    ):
         try:
             await db.execute(f"ALTER TABLE agents ADD COLUMN {col_def}")
         except aiosqlite.OperationalError:

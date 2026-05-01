@@ -38,6 +38,8 @@ class RegisterRequest(BaseModel):
     agent_id: str = Field(..., min_length=2, max_length=32, pattern=r"^[a-z0-9][a-z0-9_-]*$")
     display_name: str = Field(..., min_length=1, max_length=64)
     platform: Optional[str] = Field(None, max_length=32)
+    owner_first_name: Optional[str] = Field(None, max_length=64)
+    owner_last_name: Optional[str] = Field(None, max_length=64)
 
 class RegisterResponse(BaseModel):
     agent_id: str
@@ -48,6 +50,8 @@ class RegisterResponse(BaseModel):
     trusted: bool = False
     palette: Optional[int] = None
     hue_shift: Optional[int] = None
+    owner_first_name: Optional[str] = None
+    owner_last_name: Optional[str] = None
 
 class AgentInfo(BaseModel):
     agent_id: str
@@ -57,6 +61,8 @@ class AgentInfo(BaseModel):
     trusted: bool = False
     palette: Optional[int] = None
     hue_shift: Optional[int] = None
+    owner_first_name: Optional[str] = None
+    owner_last_name: Optional[str] = None
 
 class AppearanceRequest(BaseModel):
     """Self-service appearance override. Pass null to clear and fall back to defaults."""
@@ -70,6 +76,8 @@ class AdminPatchAgent(BaseModel):
     trusted: Optional[bool] = None
     revoked: Optional[bool] = None
     rotate_key: Optional[bool] = None
+    owner_first_name: Optional[str] = Field(None, max_length=64)
+    owner_last_name: Optional[str] = Field(None, max_length=64)
 
 class AdminPatchResponse(BaseModel):
     agent_id: str
@@ -78,3 +86,5 @@ class AdminPatchResponse(BaseModel):
     trusted: bool
     revoked: bool
     new_api_key: Optional[str] = None
+    owner_first_name: Optional[str] = None
+    owner_last_name: Optional[str] = None

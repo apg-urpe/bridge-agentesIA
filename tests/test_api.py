@@ -281,6 +281,68 @@ def test_attachments_too_large_rejected(client):
     assert "exceeds" in r.json()["detail"]
 
 
+# ---------- owner identity ----------
+
+def test_register_with_owner_persists(client):
+    r = client.post(
+        "/v1/agents/register",
+        json={
+            "agent_id": "antony-bot",
+            "display_name": "Antony Bot",
+            "platform": "Telegram",
+            "owner_first_name": "Antony",
+            "owner_last_name": "Pérez",
+        },
+    )
+    assert r.status_code == 201
+    body = r.json()
+    assert body["owner_first_name"] == "Antony"
+    assert body["owner_last_name"] == "Pérez"
+
+    # Owner appears in /v1/me and /v1/agents (no key needed for the listing)
+    me = client.get("/v1/me", headers={"X-API-Key": body["api_key"]}).json()
+    assert me["owner_first_name"] == "Antony"
+    assert me["owner_last_name"] == "Pérez"
+    listing = client.get("/v1/agents").json()
+    found = next(a for a in listing if a["agent_id"] == "antony-bot")
+    assert found["owner_first_name"] == "Antony"
+    assert found["owner_last_name"] == "Pérez"
+
+
+def test_register_without_owner_defaults_null(client):
+    rocky = register_agent(client, "rocky")
+    me = client.get("/v1/me", headers={"X-API-Key": rocky["api_key"]}).json()
+    assert me["owner_first_name"] is None
+    assert me["owner_last_name"] is None
+
+
+def test_admin_patch_owner(monkeypatch):
+    """Admin can set/update owner via PATCH /v1/agents/{id} when ADMIN_TOKEN is set."""
+    import importlib, os, tempfile
+    from fastapi.testclient import TestClient
+
+    tmpdir = tempfile.mkdtemp(prefix="bridge-test-admin-")
+    monkeypatch.setenv("DATABASE_URL", os.path.join(tmpdir, "bridge.db"))
+    monkeypatch.setenv("REGISTRATION_TOKEN", "")
+    monkeypatch.setenv("ADMIN_TOKEN", "admin-secret")
+    from app import database, main
+    importlib.reload(database)
+    importlib.reload(main)
+
+    with TestClient(main.app) as c:
+        c.post("/v1/agents/register",
+            json={"agent_id": "rocky", "display_name": "Rocky"})
+        r = c.patch(
+            "/v1/agents/rocky",
+            headers={"X-Admin-Token": "admin-secret"},
+            json={"owner_first_name": "Diego", "owner_last_name": "Suárez"},
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["owner_first_name"] == "Diego"
+        assert body["owner_last_name"] == "Suárez"
+
+
 # ---------- self-service appearance ----------
 
 def test_appearance_defaults_are_null(client):

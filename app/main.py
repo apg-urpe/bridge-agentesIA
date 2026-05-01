@@ -290,6 +290,14 @@ STATUS_HTML = """<!DOCTYPE html>
       <input type="text" id="reg-platform" placeholder="Telegram / WhatsApp / Slack / ..." autocomplete="off">
     </div>
     <div class="field">
+      <label>nombre del dueño (opcional)</label>
+      <input type="text" id="reg-owner-first" placeholder="Antony" autocomplete="off">
+    </div>
+    <div class="field">
+      <label>apellido del dueño (opcional)</label>
+      <input type="text" id="reg-owner-last" placeholder="Pérez" autocomplete="off">
+    </div>
+    <div class="field">
       <label>registration token (si el bridge lo requiere)</label>
       <input type="password" id="reg-token" placeholder="opcional" autocomplete="off">
     </div>
@@ -306,6 +314,7 @@ STATUS_HTML = """<!DOCTYPE html>
     <div class="me-info">
       <h2 id="me-name">—</h2>
       <p>id: <code id="me-id">—</code> · plataforma: <span id="me-platform">—</span></p>
+      <p id="me-owner-row" style="display:none">dueño: <strong id="me-owner">—</strong></p>
     </div>
     <div style="display:flex; gap:0.5rem; align-items:center;">
       <a href="/office" class="pill" style="text-decoration:none">🏢 Office (live view)</a>
@@ -426,6 +435,8 @@ document.getElementById('register-btn').addEventListener('click', async () => {
     agent_id: document.getElementById('reg-agent-id').value.trim(),
     display_name: document.getElementById('reg-display-name').value.trim(),
     platform: document.getElementById('reg-platform').value.trim() || null,
+    owner_first_name: document.getElementById('reg-owner-first').value.trim() || null,
+    owner_last_name: document.getElementById('reg-owner-last').value.trim() || null,
   };
   const regToken = document.getElementById('reg-token').value.trim() || localStorage.getItem(GATE_STORAGE_KEY) || '';
   try {
@@ -463,6 +474,9 @@ async function showDashboard() {
   document.getElementById('me-name').textContent = me.display_name;
   document.getElementById('me-id').textContent = me.agent_id;
   document.getElementById('me-platform').textContent = me.platform || '—';
+  const meOwner = ownerLabel(me);
+  document.getElementById('me-owner').textContent = meOwner || '—';
+  document.getElementById('me-owner-row').style.display = meOwner ? 'block' : 'none';
   await tick();
   if (pollHandle) clearInterval(pollHandle);
   pollHandle = setInterval(tick, 5000);
@@ -529,18 +543,27 @@ function renderThreads(data) {
   });
 }
 
+function ownerLabel(a) {
+  const parts = [a.owner_first_name, a.owner_last_name].filter(Boolean);
+  return parts.length ? parts.join(' ') : '';
+}
+
 function renderAgents(list) {
   const others = list.filter(a => a.agent_id !== (me && me.agent_id));
   if (!others.length) {
     agentsListEl.innerHTML = '<div class="empty">No hay otros agentes registrados todavía.</div>';
     return;
   }
-  agentsListEl.innerHTML = others.map(a => `
+  agentsListEl.innerHTML = others.map(a => {
+    const owner = ownerLabel(a);
+    return `
     <div class="agent-pill">
       <h3>${esc(a.display_name)}</h3>
       <p>id: <code>${esc(a.agent_id)}</code></p>
       <p>${a.platform ? esc(a.platform) : '<em>sin plataforma</em>'}</p>
-    </div>`).join('');
+      ${owner ? `<p>dueño: <strong>${esc(owner)}</strong></p>` : ''}
+    </div>`;
+  }).join('');
 }
 
 async function tick() {
@@ -584,12 +607,16 @@ async function loadLoginAgents() {
       el.innerHTML = '<div class="empty">Todavía no hay agentes registrados.</div>';
       return;
     }
-    el.innerHTML = list.map(a => `
+    el.innerHTML = list.map(a => {
+      const owner = ownerLabel(a);
+      return `
       <div class="agent-pill">
         <h3>${esc(a.display_name)}</h3>
         <p>id: <code>${esc(a.agent_id)}</code></p>
         <p>${a.platform ? esc(a.platform) : '<em>sin plataforma</em>'}</p>
-      </div>`).join('');
+        ${owner ? `<p>dueño: <strong>${esc(owner)}</strong></p>` : ''}
+      </div>`;
+    }).join('');
   } catch (e) {
     el.innerHTML = `<div class="empty">No se pudo cargar la lista (${esc(e.message || 'error')}).</div>`;
   }
@@ -815,8 +842,8 @@ async def register_agent(
     created_at = datetime.now(timezone.utc).isoformat()
     try:
         await db.execute(
-            "INSERT INTO agents (agent_id, display_name, platform, api_key_hash, created_at, revoked, trusted) VALUES (?,?,?,?,?,0,0)",
-            (body.agent_id, body.display_name, body.platform, hash_api_key(api_key), created_at),
+            "INSERT INTO agents (agent_id, display_name, platform, api_key_hash, created_at, revoked, trusted, owner_first_name, owner_last_name) VALUES (?,?,?,?,?,0,0,?,?)",
+            (body.agent_id, body.display_name, body.platform, hash_api_key(api_key), created_at, body.owner_first_name, body.owner_last_name),
         )
         await db.commit()
     except aiosqlite.IntegrityError as e:
@@ -830,6 +857,8 @@ async def register_agent(
         trusted=False,
         palette=None,
         hue_shift=None,
+        owner_first_name=body.owner_first_name,
+        owner_last_name=body.owner_last_name,
     )
 
 
@@ -837,7 +866,7 @@ async def register_agent(
 async def list_agents(db: aiosqlite.Connection = Depends(get_db)):
     db.row_factory = aiosqlite.Row
     async with db.execute(
-        "SELECT agent_id, display_name, platform, created_at, trusted, palette, hue_shift "
+        "SELECT agent_id, display_name, platform, created_at, trusted, palette, hue_shift, owner_first_name, owner_last_name "
         "FROM agents WHERE revoked=0 ORDER BY created_at ASC"
     ) as cur:
         rows = await cur.fetchall()
@@ -849,6 +878,8 @@ async def list_agents(db: aiosqlite.Connection = Depends(get_db)):
         trusted=bool(r["trusted"]),
         palette=r["palette"],
         hue_shift=r["hue_shift"],
+        owner_first_name=r["owner_first_name"],
+        owner_last_name=r["owner_last_name"],
     ) for r in rows]
 
 
@@ -859,7 +890,7 @@ async def whoami(
 ):
     db.row_factory = aiosqlite.Row
     async with db.execute(
-        "SELECT agent_id, display_name, platform, created_at, trusted, palette, hue_shift "
+        "SELECT agent_id, display_name, platform, created_at, trusted, palette, hue_shift, owner_first_name, owner_last_name "
         "FROM agents WHERE agent_id=?",
         (agent,),
     ) as cur:
@@ -874,6 +905,8 @@ async def whoami(
         trusted=bool(row["trusted"]),
         palette=row["palette"],
         hue_shift=row["hue_shift"],
+        owner_first_name=row["owner_first_name"],
+        owner_last_name=row["owner_last_name"],
     )
 
 
@@ -911,7 +944,7 @@ async def update_my_appearance(
     await db.commit()
 
     async with db.execute(
-        "SELECT agent_id, display_name, platform, created_at, trusted, palette, hue_shift "
+        "SELECT agent_id, display_name, platform, created_at, trusted, palette, hue_shift, owner_first_name, owner_last_name "
         "FROM agents WHERE agent_id=?",
         (agent,),
     ) as cur:
@@ -926,6 +959,8 @@ async def update_my_appearance(
         trusted=bool(row["trusted"]),
         palette=row["palette"],
         hue_shift=row["hue_shift"],
+        owner_first_name=row["owner_first_name"],
+        owner_last_name=row["owner_last_name"],
     )
 
 
@@ -939,7 +974,7 @@ async def admin_patch_agent(
     _require_admin(x_admin_token)
     db.row_factory = aiosqlite.Row
     async with db.execute(
-        "SELECT agent_id, display_name, platform, trusted, revoked FROM agents WHERE agent_id=?",
+        "SELECT agent_id, display_name, platform, trusted, revoked, owner_first_name, owner_last_name FROM agents WHERE agent_id=?",
         (agent_id,),
     ) as cur:
         row = await cur.fetchone()
@@ -960,6 +995,12 @@ async def admin_patch_agent(
     if body.revoked is not None:
         fields.append("revoked=?")
         values.append(1 if body.revoked else 0)
+    if body.owner_first_name is not None:
+        fields.append("owner_first_name=?")
+        values.append(body.owner_first_name or None)
+    if body.owner_last_name is not None:
+        fields.append("owner_last_name=?")
+        values.append(body.owner_last_name or None)
 
     new_key: Optional[str] = None
     if body.rotate_key:
@@ -973,7 +1014,7 @@ async def admin_patch_agent(
         await db.commit()
 
     async with db.execute(
-        "SELECT agent_id, display_name, platform, trusted, revoked FROM agents WHERE agent_id=?",
+        "SELECT agent_id, display_name, platform, trusted, revoked, owner_first_name, owner_last_name FROM agents WHERE agent_id=?",
         (agent_id,),
     ) as cur:
         row = await cur.fetchone()
@@ -984,6 +1025,8 @@ async def admin_patch_agent(
         trusted=bool(row["trusted"]),
         revoked=bool(row["revoked"]),
         new_api_key=new_key,
+        owner_first_name=row["owner_first_name"],
+        owner_last_name=row["owner_last_name"],
     )
 
 
