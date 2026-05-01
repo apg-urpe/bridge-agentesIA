@@ -25,7 +25,7 @@ from .models import (
     AckResponse, HealthResponse,
     RegisterRequest, RegisterResponse, AgentInfo,
     AdminPatchAgent, AdminPatchResponse,
-    AppearanceRequest,
+    AppearanceRequest, OwnerRequest,
 )
 from .auth import get_current_agent, hash_api_key
 
@@ -938,6 +938,61 @@ async def update_my_appearance(
             raise HTTPException(
                 status_code=400,
                 detail="Provide palette and/or hue_shift, or pass clear=true to reset.",
+            )
+        values.append(agent)
+        await db.execute(f"UPDATE agents SET {', '.join(fields)} WHERE agent_id=?", values)
+    await db.commit()
+
+    async with db.execute(
+        "SELECT agent_id, display_name, platform, created_at, trusted, palette, hue_shift, owner_first_name, owner_last_name "
+        "FROM agents WHERE agent_id=?",
+        (agent,),
+    ) as cur:
+        row = await cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return AgentInfo(
+        agent_id=row["agent_id"],
+        display_name=row["display_name"],
+        platform=row["platform"],
+        created_at=row["created_at"],
+        trusted=bool(row["trusted"]),
+        palette=row["palette"],
+        hue_shift=row["hue_shift"],
+        owner_first_name=row["owner_first_name"],
+        owner_last_name=row["owner_last_name"],
+    )
+
+
+@app.patch("/v1/me/owner", response_model=AgentInfo)
+async def update_my_owner(
+    body: OwnerRequest,
+    agent: str = Depends(get_current_agent),
+    db: aiosqlite.Connection = Depends(get_db),
+):
+    """Self-service owner update. Each agent can set/change its own
+    `owner_first_name` and `owner_last_name` using its own API key. Pass
+    `clear=true` to wipe both fields. Empty strings are stored as NULL.
+    """
+    db.row_factory = aiosqlite.Row
+    if body.clear:
+        await db.execute(
+            "UPDATE agents SET owner_first_name=NULL, owner_last_name=NULL WHERE agent_id=?",
+            (agent,),
+        )
+    else:
+        fields: list[str] = []
+        values: list = []
+        if body.owner_first_name is not None:
+            fields.append("owner_first_name=?")
+            values.append(body.owner_first_name.strip() or None)
+        if body.owner_last_name is not None:
+            fields.append("owner_last_name=?")
+            values.append(body.owner_last_name.strip() or None)
+        if not fields:
+            raise HTTPException(
+                status_code=400,
+                detail="Provide owner_first_name and/or owner_last_name, or pass clear=true to reset.",
             )
         values.append(agent)
         await db.execute(f"UPDATE agents SET {', '.join(fields)} WHERE agent_id=?", values)

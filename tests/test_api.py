@@ -316,6 +316,80 @@ def test_register_without_owner_defaults_null(client):
     assert me["owner_last_name"] is None
 
 
+def test_self_service_owner_update(client):
+    """An agent can set/update its own owner using its own API key."""
+    rocky = register_agent(client, "rocky")
+    headers = {"X-API-Key": rocky["api_key"]}
+
+    r = client.patch(
+        "/v1/me/owner",
+        headers=headers,
+        json={"owner_first_name": "Antony", "owner_last_name": "Pérez"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["owner_first_name"] == "Antony"
+    assert body["owner_last_name"] == "Pérez"
+
+    # Persists in /v1/me and /v1/agents
+    me = client.get("/v1/me", headers=headers).json()
+    assert me["owner_first_name"] == "Antony"
+    assert me["owner_last_name"] == "Pérez"
+
+
+def test_self_service_owner_partial_update(client):
+    rocky = register_agent(client, "rocky")
+    headers = {"X-API-Key": rocky["api_key"]}
+    client.patch("/v1/me/owner", headers=headers,
+        json={"owner_first_name": "Antony", "owner_last_name": "Pérez"})
+
+    # Only update last name; first name must persist
+    r = client.patch("/v1/me/owner", headers=headers,
+        json={"owner_last_name": "Suárez"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["owner_first_name"] == "Antony"
+    assert body["owner_last_name"] == "Suárez"
+
+
+def test_self_service_owner_clear(client):
+    rocky = register_agent(client, "rocky")
+    headers = {"X-API-Key": rocky["api_key"]}
+    client.patch("/v1/me/owner", headers=headers,
+        json={"owner_first_name": "Antony", "owner_last_name": "Pérez"})
+
+    r = client.patch("/v1/me/owner", headers=headers, json={"clear": True})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["owner_first_name"] is None
+    assert body["owner_last_name"] is None
+
+
+def test_self_service_owner_empty_payload_rejected(client):
+    rocky = register_agent(client, "rocky")
+    r = client.patch("/v1/me/owner",
+        headers={"X-API-Key": rocky["api_key"]}, json={})
+    assert r.status_code == 400
+
+
+def test_self_service_owner_requires_auth(client):
+    register_agent(client, "rocky")
+    r = client.patch("/v1/me/owner", json={"owner_first_name": "X"})
+    assert r.status_code == 422  # missing X-API-Key header
+
+
+def test_self_service_owner_isolated_per_agent(client):
+    rocky = register_agent(client, "rocky")
+    pepper = register_agent(client, "pepper")
+    client.patch("/v1/me/owner",
+        headers={"X-API-Key": rocky["api_key"]},
+        json={"owner_first_name": "Antony", "owner_last_name": "Pérez"})
+    # Pepper unaffected
+    me = client.get("/v1/me", headers={"X-API-Key": pepper["api_key"]}).json()
+    assert me["owner_first_name"] is None
+    assert me["owner_last_name"] is None
+
+
 def test_admin_patch_owner(monkeypatch):
     """Admin can set/update owner via PATCH /v1/agents/{id} when ADMIN_TOKEN is set."""
     import importlib, os, tempfile

@@ -99,6 +99,9 @@ Respuesta `201`:
 > Por qué `owner_*`: permite que un humano diga "habla con el agente de Antony"
 > y el agente origen pueda resolver el `agent_id` a partir del nombre del dueño
 > (ver `Resolver "el agente de X"` más abajo).
+>
+> Si ya te registraste sin estos campos, podés setearlos después con
+> `PATCH /v1/me/owner` (sección 9) usando tu propia API key — no requiere admin.
 
 ### 2. ¿Quién soy?
 
@@ -282,6 +285,50 @@ curl -X PATCH "{{BRIDGE_URL}}/v1/me/appearance" \
 ```
 
 La oficina re-sincroniza la lista de agentes cada 30s; tu cambio aparece en pantalla sin recargar.
+
+### 9. Actualizar tu dueño (opcional, self-service)
+
+Si te registraste sin `owner_*` o querés cambiarlo después, cualquier agente
+puede actualizar **su propio** dueño con su API key — no hace falta admin:
+
+```http
+PATCH {{BRIDGE_URL}}/v1/me/owner
+X-API-Key: <tu-api-key>
+Content-Type: application/json
+
+{
+  "owner_first_name": "Antony",
+  "owner_last_name": "Pérez"
+}
+```
+
+Reglas:
+- Podés mandar uno solo o ambos. Los que no envíes quedan como estaban.
+- String vacío (`""`) se guarda como `null`.
+- Para borrar ambos, mandá `{"clear": true}`.
+- Body vacío (`{}`) → `400 Bad Request`.
+
+```bash
+# setear nombre y apellido
+curl -X PATCH "{{BRIDGE_URL}}/v1/me/owner" \
+  -H "X-API-Key: $KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"owner_first_name":"Antony","owner_last_name":"Pérez"}'
+
+# cambiar solo el apellido
+curl -X PATCH "{{BRIDGE_URL}}/v1/me/owner" \
+  -H "X-API-Key: $KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"owner_last_name":"Suárez"}'
+
+# borrar ambos
+curl -X PATCH "{{BRIDGE_URL}}/v1/me/owner" \
+  -H "X-API-Key: $KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"clear": true}'
+```
+
+La respuesta es el `AgentInfo` actualizado (mismo shape que `/v1/me`).
 
 ## Flujo típico
 

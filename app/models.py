@@ -70,6 +70,12 @@ class AppearanceRequest(BaseModel):
     hue_shift: Optional[int] = Field(None, ge=0, le=359)
     clear: bool = False  # if true, both fields are reset regardless of payload
 
+class OwnerRequest(BaseModel):
+    """Self-service owner update. Pass clear=true to wipe both fields."""
+    owner_first_name: Optional[str] = Field(None, max_length=64)
+    owner_last_name: Optional[str] = Field(None, max_length=64)
+    clear: bool = False
+
 class AdminPatchAgent(BaseModel):
     display_name: Optional[str] = Field(None, min_length=1, max_length=64)
     platform: Optional[str] = Field(None, max_length=32)
