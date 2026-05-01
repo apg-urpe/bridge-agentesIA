@@ -426,6 +426,7 @@ function App() {
   // Sidebar groups are collapsed by default; clicking a sender's name toggles
   // their messages open. Tracked as a set of expanded agent ids.
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set());
+  const [expandedMessages, setExpandedMessages] = useState<Set<string>>(() => new Set());
 
   const toggleGroup = useCallback((agentId: string) => {
     setExpandedGroups((prev) => {
@@ -1056,13 +1057,39 @@ function App() {
                                 margin: 0,
                                 lineHeight: 1.4,
                                 fontFamily: "'Inter', sans-serif",
-                                overflow: 'hidden',
-                                display: '-webkit-box',
-                                WebkitLineClamp: 3,
-                                WebkitBoxOrient: 'vertical',
+                                ...(expandedMessages.has(msg.id) ? {} : {
+                                  overflow: 'hidden',
+                                  display: '-webkit-box',
+                                  WebkitLineClamp: 3,
+                                  WebkitBoxOrient: 'vertical' as const,
+                                }),
                               }}>
                                 {msg.content}
                               </p>
+                              {msg.content.length > 120 && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setExpandedMessages((prev) => {
+                                      const next = new Set(prev);
+                                      if (next.has(msg.id)) next.delete(msg.id);
+                                      else next.add(msg.id);
+                                      return next;
+                                    });
+                                  }}
+                                  style={{
+                                    background: 'none',
+                                    border: 'none',
+                                    color: '#6366f1',
+                                    fontSize: '10px',
+                                    padding: '2px 0 0 0',
+                                    cursor: 'pointer',
+                                    fontFamily: "'Inter', sans-serif",
+                                  }}
+                                >
+                                  {expandedMessages.has(msg.id) ? 'ver menos' : 'ver más'}
+                                </button>
+                              )}
                             </div>
                           );
                         })}
