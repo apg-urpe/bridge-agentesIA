@@ -41,6 +41,8 @@ export interface AgentEntry {
   palette: number;       // 0..PALETTE_COUNT-1
   hueShift: number;      // 0..360 for color variety within a palette
   color: string;         // hex used by header dots / log
+  /** Pre-formatted "Nombre Apellido" (or just one if only one is set). Empty string if no owner. */
+  ownerLabel: string;
 }
 
 const PALETTE_COUNT = 6;
@@ -90,6 +92,11 @@ function shortDisplayName(name: string): string {
   return head.trim();
 }
 
+/** Combine owner first/last name into a display label, trimming blanks. */
+function formatOwnerLabel(first: string | null | undefined, last: string | null | undefined): string {
+  return [first, last].map((s) => (s || '').trim()).filter(Boolean).join(' ');
+}
+
 /** Resolve appearance with backend overrides falling through to a stable hash. */
 function deriveAppearance(ba: BridgeAgent): { palette: number; hueShift: number; color: string } {
   const palette = ba.palette ?? (stableHash(ba.agent_id) % PALETTE_COUNT);
@@ -121,16 +128,19 @@ async function refreshAgents(): Promise<AgentEntry[]> {
   for (const ba of bridgeAgents) {
     const { palette, hueShift, color } = deriveAppearance(ba);
     const shortName = shortDisplayName(ba.display_name || '') || ba.agent_id;
+    const ownerLabel = formatOwnerLabel(ba.owner_first_name, ba.owner_last_name);
     const existing = agentRegistry.get(ba.agent_id);
     if (existing) {
       const nameChanged = existing.displayName !== shortName;
       const appearanceChanged = existing.palette !== palette || existing.hueShift !== hueShift;
-      if (appearanceChanged || nameChanged) {
+      const ownerChanged = existing.ownerLabel !== ownerLabel;
+      if (appearanceChanged || nameChanged || ownerChanged) {
         existing.palette = palette;
         existing.hueShift = hueShift;
         existing.color = color;
         existing.displayName = shortName;
         existing.platform = ba.platform ?? null;
+        existing.ownerLabel = ownerLabel;
         if (appearanceChanged) {
           window.dispatchEvent(new MessageEvent('message', {
             data: {
@@ -153,6 +163,7 @@ async function refreshAgents(): Promise<AgentEntry[]> {
       palette,
       hueShift,
       color,
+      ownerLabel,
     };
     agentRegistry.set(ba.agent_id, entry);
     changed = true;

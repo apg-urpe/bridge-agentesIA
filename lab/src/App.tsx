@@ -699,7 +699,11 @@ function App() {
   const visibleAgents = agentEntries.slice(0, 8); // header gets crowded past this
   const characterIds = agentEntries.map((a) => a.characterId);
   const agentNamesById: Record<number, string> = {};
-  for (const a of agentEntries) agentNamesById[a.characterId] = a.displayName;
+  const agentOwnersById: Record<number, string> = {};
+  for (const a of agentEntries) {
+    agentNamesById[a.characterId] = a.displayName;
+    if (a.ownerLabel) agentOwnersById[a.characterId] = a.ownerLabel;
+  }
   const bridgeOnline = feedStatus === 'open';
 
   return (
@@ -831,6 +835,7 @@ function App() {
             onCloseAgent={() => {}}
             alwaysShowOverlay={true}
             agentNames={agentNamesById}
+            agentOwners={agentOwnersById}
             agentSpeech={agentSpeech}
           />
           <ZoomControls zoom={zoom} onZoomChange={setZoom} />

@@ -88,6 +88,9 @@ export interface BridgeAgent {
   /** Self-service appearance overrides; null = use hash-derived defaults. */
   palette: number | null;
   hue_shift: number | null;
+  /** Optional owner identity (nombre y apellido). Null when not set. */
+  owner_first_name: string | null;
+  owner_last_name: string | null;
 }
 
 /** Shape emitted by GET /v1/office/feed (SSE `data:` payload). */

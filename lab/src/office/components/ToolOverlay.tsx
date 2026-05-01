@@ -35,6 +35,8 @@ interface ToolOverlayProps {
   alwaysShowOverlay: boolean;
   /** Optional id → display name map. Falls back to activity text when missing. */
   agentNames?: Record<number, string>;
+  /** Optional id → "Nombre Apellido" of the human owner; renders small under the name. */
+  agentOwners?: Record<number, string>;
   /** Optional id → currently-speaking message (renders a bubble above nameplate). */
   agentSpeech?: Record<number, string>;
 }
@@ -81,6 +83,7 @@ export function ToolOverlay({
   onCloseAgent,
   alwaysShowOverlay,
   agentNames,
+  agentOwners,
   agentSpeech,
 }: ToolOverlayProps) {
   const [, setTick] = useState(0);
@@ -171,7 +174,12 @@ export function ToolOverlay({
         const teamRoleLabel = ch.isTeamLead ? 'LEAD' : ch.agentName || null;
         const totalTokens = ch.inputTokens + ch.outputTokens;
         const tokenRatio = totalTokens / MAX_CONTEXT_TOKENS;
-        const hasExtraLines = !!(ch.folderName || teamRoleLabel);
+        // Show owner only for real bridge agents (non-subagents) and only when
+        // the nameplate is showing the registered name (not a live tool status).
+        const ownerText = !isSub && activityText === agentNames?.[id]
+          ? agentOwners?.[id] || ''
+          : '';
+        const hasExtraLines = !!(ch.folderName || teamRoleLabel || ownerText);
         const speechText = !isSub ? agentSpeech?.[id] : undefined;
         const hasSpeech = !!speechText;
 
@@ -238,6 +246,18 @@ export function ToolOverlay({
                 >
                   {activityText}
                 </span>
+                {ownerText && (
+                  <span
+                    className="overflow-hidden text-ellipsis block leading-none"
+                    style={{
+                      fontSize: '13px',
+                      color: '#9ca3af',
+                      marginTop: 2,
+                    }}
+                  >
+                    ({ownerText})
+                  </span>
+                )}
                 {ch.folderName && (
                   <span className="text-2xs leading-none overflow-hidden text-ellipsis block">
                     {ch.folderName}
