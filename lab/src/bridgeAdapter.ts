@@ -114,10 +114,15 @@ function deriveAppearance(ba: BridgeAgent): { palette: number; hueShift: number;
  * preserved across refreshes so animations don't jump. New agents get the next
  * free numeric id. Existing agents whose `palette` or `hue_shift` changed get
  * a hot-swap event so the engine retints the on-screen sprite without reload.
+ *
+ * Agents that disappear from /v1/agents (revoked or deleted server-side) are
+ * removed from the registry and the engine is told to despawn them so the
+ * canvas doesn't keep ghosts of dead agents.
  */
 async function refreshAgents(): Promise<AgentEntry[]> {
   const bridgeAgents: BridgeAgent[] = await fetchAgents();
   bridgeAgents.sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''));
+  const incomingIds = new Set(bridgeAgents.map((ba) => ba.agent_id));
 
   let nextId = 1;
   for (const e of agentRegistry.values()) {
@@ -125,6 +130,17 @@ async function refreshAgents(): Promise<AgentEntry[]> {
   }
 
   let changed = false;
+
+  // First, drop agents that the bridge no longer lists (revoked / deleted).
+  for (const [agentId, entry] of agentRegistry) {
+    if (incomingIds.has(agentId)) continue;
+    agentRegistry.delete(agentId);
+    window.dispatchEvent(new MessageEvent('message', {
+      data: { type: 'agentClosed', id: entry.characterId },
+    }));
+    changed = true;
+  }
+
   for (const ba of bridgeAgents) {
     const { palette, hueShift, color } = deriveAppearance(ba);
     const shortName = shortDisplayName(ba.display_name || '') || ba.agent_id;
