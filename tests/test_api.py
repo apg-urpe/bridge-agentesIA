@@ -4,6 +4,8 @@ Cada test usa una DB temporal (ver conftest.py) — totalmente aislado.
 Correr con: docker compose exec bridge python -m pytest tests/ -v
        o:   .\scripts\run-pytest.ps1
 """
+import base64
+import hashlib
 import pytest
 from .conftest import register_agent
 
@@ -169,6 +171,114 @@ def test_threads_groups_messages_by_thread_id(client):
     assert len(threads) == 1
     assert threads[0]["thread_id"] == "t1"
     assert threads[0]["message_count"] == 3
+
+
+# ---------- attachments ----------
+
+def test_attachments_roundtrip_binary_and_text(client):
+    """Send a message with two attachments (binary + text/UTF-8) and verify
+    the receiver gets them byte-for-byte via /v1/inbox and /v1/threads."""
+    rocky = register_agent(client, "rocky")
+    pepper = register_agent(client, "pepper")
+
+    raw_bin = bytes(range(256)) * 8  # 2048 bytes, full byte range
+    sha_in = hashlib.sha256(raw_bin).hexdigest()
+    txt = "Hola desde Rocky\nLínea 2 con tildes: áéíóú\n"
+
+    r = client.post(
+        "/v1/send",
+        headers={"X-API-Key": rocky["api_key"]},
+        json={
+            "from_agent": "rocky", "to_agent": "pepper",
+            "message": "con dos adjuntos",
+            "attachments": [
+                {"filename": "blob.bin",
+                 "content_type": "application/octet-stream",
+                 "content_b64": base64.b64encode(raw_bin).decode()},
+                {"filename": "nota.txt",
+                 "content_type": "text/plain",
+                 "content_b64": base64.b64encode(txt.encode("utf-8")).decode()},
+            ],
+        },
+    )
+    assert r.status_code == 200, r.text
+
+    inbox = client.get(
+        "/v1/inbox/pepper",
+        headers={"X-API-Key": pepper["api_key"]},
+    ).json()
+    assert len(inbox) == 1
+    msg = inbox[0]
+    assert msg["message"] == "con dos adjuntos"
+    assert msg["attachments"] is not None and len(msg["attachments"]) == 2
+
+    a0, a1 = msg["attachments"]
+    assert a0["filename"] == "blob.bin"
+    assert a0["content_type"] == "application/octet-stream"
+    got_bin = base64.b64decode(a0["content_b64"])
+    assert got_bin == raw_bin
+    assert hashlib.sha256(got_bin).hexdigest() == sha_in
+
+    assert a1["filename"] == "nota.txt"
+    assert a1["content_type"] == "text/plain"
+    assert base64.b64decode(a1["content_b64"]).decode("utf-8") == txt
+
+    threads = client.get(
+        "/v1/threads",
+        headers={"X-API-Key": pepper["api_key"]},
+    ).json()["threads"]
+    th_msg = threads[0]["messages"][0]
+    assert th_msg["attachments"] is not None
+    assert len(th_msg["attachments"]) == 2
+    assert base64.b64decode(th_msg["attachments"][0]["content_b64"]) == raw_bin
+
+
+def test_attachments_optional_field_stays_null(client):
+    """Mensajes sin attachments deben surface como `attachments: null`."""
+    rocky = register_agent(client, "rocky")
+    pepper = register_agent(client, "pepper")
+    client.post(
+        "/v1/send",
+        headers={"X-API-Key": rocky["api_key"]},
+        json={"from_agent": "rocky", "to_agent": "pepper", "message": "sin adjuntos"},
+    )
+    inbox = client.get(
+        "/v1/inbox/pepper",
+        headers={"X-API-Key": pepper["api_key"]},
+    ).json()
+    assert inbox[0]["attachments"] is None
+
+
+def test_attachments_too_many_rejected(client):
+    rocky = register_agent(client, "rocky")
+    register_agent(client, "pepper")
+    one = {"filename": "x.txt", "content_type": "text/plain",
+           "content_b64": base64.b64encode(b"hi").decode()}
+    r = client.post(
+        "/v1/send",
+        headers={"X-API-Key": rocky["api_key"]},
+        json={"from_agent": "rocky", "to_agent": "pepper",
+              "message": "demasiados", "attachments": [one] * 6},
+    )
+    assert r.status_code == 413
+    assert "Max" in r.json()["detail"]
+
+
+def test_attachments_too_large_rejected(client):
+    rocky = register_agent(client, "rocky")
+    register_agent(client, "pepper")
+    big = b"A" * (512 * 1024 + 64)  # > 512 KB raw
+    r = client.post(
+        "/v1/send",
+        headers={"X-API-Key": rocky["api_key"]},
+        json={"from_agent": "rocky", "to_agent": "pepper",
+              "message": "muy pesado",
+              "attachments": [{"filename": "big.bin",
+                               "content_type": "application/octet-stream",
+                               "content_b64": base64.b64encode(big).decode()}]},
+    )
+    assert r.status_code == 413
+    assert "exceeds" in r.json()["detail"]
 
 
 # ---------- self-service appearance ----------

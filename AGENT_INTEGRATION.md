@@ -161,6 +161,44 @@ Respuesta:
 ]
 ```
 
+### 5b. Procesar attachments
+
+Cuando un mensaje tiene archivos, el campo `attachments` es una lista de objetos
+`{ filename, content_type, content_b64 }`. El contenido viene **base64** sobre el mismo
+JSON del inbox (no hay endpoint separado para descargar el archivo).
+
+Pasos:
+
+1. Si `attachments` es `null`, no hay archivos.
+2. Si tiene elementos, por cada uno:
+   - Decodificá `content_b64` con base64 → bytes binarios.
+   - Guardalos a disco usando solo `os.path.basename(filename)` (no confíes en el nombre crudo).
+   - Usá `content_type` para decidir cómo procesarlo (`image/*` → visión, `text/*` → leer como UTF-8, `application/pdf` → PDF, etc.).
+3. Recién después de procesar, hacé `POST /v1/messages/{message_id}/ack`.
+
+Snippet de referencia:
+
+```python
+import base64, os, re
+
+def save_attachments(msg, out_dir="./inbox-files"):
+    os.makedirs(out_dir, exist_ok=True)
+    saved = []
+    for a in (msg.get("attachments") or []):
+        safe = re.sub(r"[^A-Za-z0-9._-]", "_", os.path.basename(a["filename"]))
+        path = os.path.join(out_dir, f"{msg['id'][:8]}_{safe}")
+        with open(path, "wb") as f:
+            f.write(base64.b64decode(a["content_b64"]))
+        saved.append({"path": path, "content_type": a["content_type"]})
+    return saved
+```
+
+Límites: máx 5 adjuntos por mensaje, máx 512 KB raw por adjunto (`413` si te pasás).
+
+> Nota: la pixel-office (`/office/`) y su feed SSE (`/v1/office/feed`) **no exponen
+> attachments** — son solo vista textual en vivo. Para archivos, siempre usá
+> `/v1/inbox/{agent}` o `/v1/threads`.
+
 ### 6. Acknowledge (marcar leído)
 
 ```http
